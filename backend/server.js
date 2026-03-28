@@ -597,13 +597,136 @@ const validateDueDate = (dueDate) => {
     return null;
 };
 
-// Get all tasks for the current user
+// Get all tasks for the current user with optional pagination and filtering
 app.get('/api/tasks', ensureAuthenticated, async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM tasks WHERE user_id = $1 ORDER BY id', [req.user.id]);
+        const { 
+            page, 
+            limit, 
+            priority, 
+            category, 
+            completed, 
+            search,
+            sortBy = 'id',
+            sortOrder = 'ASC'
+        } = req.query;
+
+        // Build WHERE clause dynamically
+        const conditions = ['user_id = $1'];
+        const values = [req.user.id];
+        let paramCount = 1;
+
+        // Add filters if provided
+        if (priority) {
+            paramCount++;
+            conditions.push(`priority = $${paramCount}`);
+            values.push(priority);
+        }
+
+        if (category) {
+            paramCount++;
+            conditions.push(`category = $${paramCount}`);
+            values.push(category);
+        }
+
+        if (completed !== undefined) {
+            paramCount++;
+            conditions.push(`completed = $${paramCount}`);
+            values.push(completed === 'true');
+        }
+
+        if (search) {
+            paramCount++;
+            conditions.push(`title ILIKE $${paramCount}`);
+            values.push(`%${search}%`);
+        }
+
+        // Validate sortBy to prevent SQL injection
+        const allowedSortFields = ['id', 'title', 'priority', 'due_date', 'created_at', 'completed'];
+        const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'id';
+        const order = sortOrder.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+
+        const whereClause = conditions.join(' AND ');
+
+        // Pagination
+        if (page && limit) {
+            const pageNum = parseInt(page, 10);
+            const limitNum = parseInt(limit, 10);
+            
+            if (isNaN(pageNum) || isNaN(limitNum) || pageNum < 1 || limitNum < 1) {
+                return res.status(400).json({ error: 'Invalid pagination parameters' });
+            }
+
+            const offset = (pageNum - 1) * limitNum;
+            
+            // Get total count
+            const countResult = await pool.query(
+                `SELECT COUNT(*) FROM tasks WHERE ${whereClause}`,
+                values
+            );
+            const totalCount = parseInt(countResult.rows[0].count, 10);
+
+            // Get paginated results
+            const result = await pool.query(
+                `SELECT * FROM tasks WHERE ${whereClause} ORDER BY ${sortField} ${order} LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
+                [...values, limitNum, offset]
+            );
+
+            return res.json({
+                tasks: result.rows,
+                pagination: {
+                    page: pageNum,
+                    limit: limitNum,
+                    totalCount,
+                    totalPages: Math.ceil(totalCount / limitNum),
+                    hasMore: offset + limitNum < totalCount
+                }
+            });
+        }
+
+        // No pagination - return all matching tasks
+        const result = await pool.query(
+            `SELECT * FROM tasks WHERE ${whereClause} ORDER BY ${sortField} ${order}`,
+            values
+        );
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching tasks:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Search tasks by title or description
+app.get('/api/tasks/search', ensureAuthenticated, async (req, res) => {
+    const { q, limit = 50 } = req.query;
+
+    if (!q || q.trim() === '') {
+        return res.status(400).json({ error: 'Search query (q) is required' });
+    }
+
+    const searchLimit = parseInt(limit, 10);
+    if (isNaN(searchLimit) || searchLimit < 1 || searchLimit > 100) {
+        return res.status(400).json({ error: 'Limit must be between 1 and 100' });
+    }
+
+    try {
+        const result = await pool.query(
+            `SELECT * FROM tasks 
+             WHERE user_id = $1 AND title ILIKE $2 
+             ORDER BY 
+                CASE WHEN title ILIKE $3 THEN 0 ELSE 1 END,
+                created_at DESC
+             LIMIT $4`,
+            [req.user.id, `%${q}%`, `${q}%`, searchLimit]
+        );
+
+        res.json({
+            query: q,
+            count: result.rows.length,
+            tasks: result.rows
+        });
+    } catch (error) {
+        console.error('Error searching tasks:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -750,6 +873,97 @@ app.delete('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
     }
 });
 
+// Bulk delete tasks
+app.post('/api/tasks/bulk-delete', ensureAuthenticated, async (req, res) => {
+    const { taskIds } = req.body;
+
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+        return res.status(400).json({ error: 'taskIds must be a non-empty array' });
+    }
+
+    // Validate all IDs are numbers
+    const validIds = taskIds.filter(id => !isNaN(parseInt(id, 10))).map(id => parseInt(id, 10));
+    if (validIds.length === 0) {
+        return res.status(400).json({ error: 'No valid task IDs provided' });
+    }
+
+    try {
+        const placeholders = validIds.map((_, i) => `$${i + 2}`).join(',');
+        const result = await pool.query(
+            `DELETE FROM tasks WHERE id IN (${placeholders}) AND user_id = $1 RETURNING *`,
+            [req.user.id, ...validIds]
+        );
+
+        res.json({
+            message: `${result.rows.length} task(s) deleted successfully`,
+            deletedCount: result.rows.length,
+            deletedTasks: result.rows
+        });
+    } catch (error) {
+        console.error('Error bulk deleting tasks:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Bulk update tasks
+app.post('/api/tasks/bulk-update', ensureAuthenticated, async (req, res) => {
+    const { taskIds, updates } = req.body;
+
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+        return res.status(400).json({ error: 'taskIds must be a non-empty array' });
+    }
+
+    if (!updates || typeof updates !== 'object') {
+        return res.status(400).json({ error: 'updates must be an object' });
+    }
+
+    // Validate allowed update fields
+    const allowedFields = ['completed', 'priority', 'category'];
+    const updateFields = Object.keys(updates).filter(key => allowedFields.includes(key));
+    
+    if (updateFields.length === 0) {
+        return res.status(400).json({ error: 'No valid update fields provided. Allowed: completed, priority, category' });
+    }
+
+    // Validate priority if provided
+    if (updates.priority) {
+        const priorityError = validatePriority(updates.priority);
+        if (priorityError) {
+            return res.status(400).json({ error: priorityError });
+        }
+    }
+
+    // Validate all IDs are numbers
+    const validIds = taskIds.filter(id => !isNaN(parseInt(id, 10))).map(id => parseInt(id, 10));
+    if (validIds.length === 0) {
+        return res.status(400).json({ error: 'No valid task IDs provided' });
+    }
+
+    try {
+        // Build SET clause
+        const setClause = updateFields.map((field, i) => `${field} = $${i + 2}`).join(', ');
+        const values = [req.user.id, ...updateFields.map(f => updates[f])];
+        
+        const placeholders = validIds.map((_, i) => `$${updateFields.length + i + 2}`).join(',');
+        values.push(...validIds);
+
+        const result = await pool.query(
+            `UPDATE tasks SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id IN (${placeholders}) AND user_id = $1 RETURNING *`,
+            values
+        );
+
+        res.json({
+            message: `${result.rows.length} task(s) updated successfully`,
+            updatedCount: result.rows.length,
+            updatedTasks: result.rows
+        });
+    } catch (error) {
+        console.error('Error bulk updating tasks:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
 
 // ========== PROFILE MANAGEMENT ENDPOINTS ==========
 
@@ -814,6 +1028,36 @@ app.delete('/api/users/avatar', ensureAuthenticated, async (req, res) => {
         res.json({ message: 'Avatar deleted successfully', user: result.rows[0] });
     } catch (error) {
         console.error('Error deleting avatar:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Delete user account (GDPR compliance)
+app.delete('/api/users', ensureAuthenticated, async (req, res) => {
+    try {
+        // Delete user (cascade will delete tasks, filter presets, and sessions)
+        const result = await pool.query(
+            'DELETE FROM users WHERE id = $1 RETURNING id, username, email',
+            [req.user.id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Destroy session
+        req.logout((err) => {
+            if (err) {
+                console.error('Error logging out after account deletion:', err);
+            }
+        });
+
+        res.json({ 
+            message: 'Account deleted successfully', 
+            deletedUser: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error deleting user account:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

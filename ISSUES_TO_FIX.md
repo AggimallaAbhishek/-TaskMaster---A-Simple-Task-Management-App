@@ -16,9 +16,9 @@ This document catalogs all identified issues in the TaskMaster codebase, organiz
 | Accessibility | 0 | 4 | 5 | 3 | 12 | 4 |
 | Configuration/Deploy | 4 | 3 | 5 | 4 | 16 | 7 |
 | Test Coverage | 0 | 2 | 6 | 4 | 12 | 0 |
-| API Design | 0 | 1 | 5 | 4 | 10 | 1 |
-| Missing Features | 0 | 1 | 6 | 5 | 12 | 0 |
-| **Total** | **11** | **21** | **45** | **31** | **108** | **37** |
+| API Design | 0 | 1 | 5 | 4 | 10 | 5 |
+| Missing Features | 0 | 1 | 6 | 5 | 12 | 1 |
+| **Total** | **11** | **21** | **45** | **31** | **108** | **42** |
 
 ---
 
@@ -231,23 +231,24 @@ This document catalogs all identified issues in the TaskMaster codebase, organiz
 #### 37. Inconsistent Field Naming
 - **Issue:** Frontend uses camelCase (`dueDate`), backend uses snake_case (`due_date`)
 - **Fix:** Transform consistently at API boundary
+- **Note:** Not critical - both work correctly; deferred to future refactor
 
-#### 38. Missing DELETE User Endpoint
+#### ✅ 38. Missing DELETE User Endpoint - FIXED
 - **Issue:** No way to delete user accounts
-- **Fix:** Add `DELETE /api/users` endpoint
+- **Fix Applied:** Added `DELETE /api/users` endpoint with cascade deletion and session cleanup
 
-#### 39. No Pagination
-- **File:** `backend/API.md`
+#### ✅ 39. No Pagination - FIXED
+- **File:** `backend/server.js`
 - **Issue:** All tasks returned in single response
-- **Fix:** Implement limit/offset pagination
+- **Fix Applied:** Implemented `?page=1&limit=10` with totalCount, totalPages, hasMore metadata
 
-#### 40. Missing Inline Filtering
+#### ✅ 40. Missing Inline Filtering - FIXED
 - **Issue:** Must create preset to filter; no query params
-- **Fix:** Support `GET /api/tasks?priority=high&completed=false`
+- **Fix Applied:** Support `GET /api/tasks?priority=high&completed=false&search=term&sortBy=due_date`
 
-#### 41. No Bulk Operations
+#### ✅ 41. No Bulk Operations - FIXED
 - **Issue:** No bulk delete/update endpoints
-- **Fix:** Add `POST /api/tasks/bulk-delete`, etc.
+- **Fix Applied:** Added `POST /api/tasks/bulk-delete` and `POST /api/tasks/bulk-update`
 
 ### Test Coverage
 
@@ -390,7 +391,7 @@ This document catalogs all identified issues in the TaskMaster codebase, organiz
 
 ## Missing Features (Enhancement Backlog)
 
-1. **Search Functionality** - No task search endpoint
+1. ✅ **Search Functionality - IMPLEMENTED** - Added GET /api/tasks/search endpoint
 2. **Task Recurrence** - No repeating tasks support
 3. **Subtasks/Dependencies** - No hierarchical tasks
 4. **Task Attachments** - No file upload support
