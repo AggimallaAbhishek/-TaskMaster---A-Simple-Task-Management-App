@@ -44,6 +44,9 @@ const pool = new Pool({
     max: parseInt(process.env.DB_POOL_MAX || '10'),
     idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT || '30000'),
     connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECT_TIMEOUT || '5000'),
+    
+    // Query timeout (30 seconds)
+    statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000'),
 });
 
 // Database connection pool event handlers
@@ -647,6 +650,9 @@ app.post('/api/tasks', ensureAuthenticated, async (req, res) => {
 // Update task (PUT - full replacement) for the current user
 app.put('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
     const taskId = parseInt(req.params.id, 10);
+    if (isNaN(taskId)) {
+        return res.status(400).json({ error: 'Invalid task ID' });
+    }
     const { title, completed, priority, category, dueDate } = req.body;
 
     // Validate input
@@ -722,6 +728,9 @@ app.put('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
 // Delete task for the current user
 app.delete('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
     const taskId = parseInt(req.params.id, 10);
+    if (isNaN(taskId)) {
+        return res.status(400).json({ error: 'Invalid task ID' });
+    }
     
     try {
         const result = await pool.query(
@@ -852,13 +861,16 @@ app.post('/api/filter-presets', ensureAuthenticated, async (req, res) => {
 // PUT /api/filter-presets/:id - Update filter preset
 app.put('/api/filter-presets/:id', ensureAuthenticated, async (req, res) => {
     try {
-        const { id } = req.params;
+        const presetId = parseInt(req.params.id, 10);
+        if (isNaN(presetId)) {
+            return res.status(400).json({ error: 'Invalid preset ID' });
+        }
         const { name, description, filter_config } = req.body;
 
         // Verify preset belongs to user
         const presetCheck = await pool.query(
             'SELECT * FROM filter_presets WHERE id = $1 AND user_id = $2',
-            [id, req.user.id]
+            [presetId, req.user.id]
         );
 
         if (presetCheck.rows.length === 0) {
@@ -867,7 +879,7 @@ app.put('/api/filter-presets/:id', ensureAuthenticated, async (req, res) => {
 
         const result = await pool.query(
             'UPDATE filter_presets SET name = COALESCE($1, name), description = COALESCE($2, description), filter_config = COALESCE($3, filter_config), updated_at = CURRENT_TIMESTAMP WHERE id = $4 AND user_id = $5 RETURNING *',
-            [name || null, description || null, filter_config || null, id, req.user.id]
+            [name || null, description || null, filter_config || null, presetId, req.user.id]
         );
 
         res.json(result.rows[0]);
@@ -883,11 +895,14 @@ app.put('/api/filter-presets/:id', ensureAuthenticated, async (req, res) => {
 // DELETE /api/filter-presets/:id - Delete filter preset
 app.delete('/api/filter-presets/:id', ensureAuthenticated, async (req, res) => {
     try {
-        const { id } = req.params;
+        const presetId = parseInt(req.params.id, 10);
+        if (isNaN(presetId)) {
+            return res.status(400).json({ error: 'Invalid preset ID' });
+        }
 
         const result = await pool.query(
             'DELETE FROM filter_presets WHERE id = $1 AND user_id = $2 RETURNING *',
-            [id, req.user.id]
+            [presetId, req.user.id]
         );
 
         if (result.rows.length === 0) {
@@ -904,12 +919,15 @@ app.delete('/api/filter-presets/:id', ensureAuthenticated, async (req, res) => {
 // POST /api/filter-presets/:id/apply - Apply filter preset and return filtered tasks
 app.post('/api/filter-presets/:id/apply', ensureAuthenticated, async (req, res) => {
     try {
-        const { id } = req.params;
+        const presetId = parseInt(req.params.id, 10);
+        if (isNaN(presetId)) {
+            return res.status(400).json({ error: 'Invalid preset ID' });
+        }
 
         // Get the preset
         const presetResult = await pool.query(
             'SELECT * FROM filter_presets WHERE id = $1 AND user_id = $2',
-            [id, req.user.id]
+            [presetId, req.user.id]
         );
 
         if (presetResult.rows.length === 0) {

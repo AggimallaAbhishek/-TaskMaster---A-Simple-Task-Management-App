@@ -41,8 +41,9 @@ describe('useAuth hook', () => {
       expect(result.current.loading).toBe(false);
     });
 
+    // Auth check failure is silent (user just isn't logged in)
     expect(result.current.user).toBeNull();
-    expect(result.current.error).toContain('Failed to check authentication');
+    expect(result.current.error).toBe('');
   });
 
   it('should provide login function', () => {

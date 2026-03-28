@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useAuth, useTasks, useFilter, useProfile } from './hooks';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthPanel } from './components/Auth/AuthPanel';
 import { LoginPage } from './components/Auth/LoginPage';
 import { TaskForm } from './components/Tasks/TaskForm';
 import { TaskList } from './components/Tasks/TaskList';
-import { ProfilePanel } from './components/Profile/ProfilePanel';
-import { PhysicsPlayground } from './components/Playground/PhysicsPlayground';
 import { SkipToMainContent } from './components/Accessible';
 import apiClient from './api/client';
 import { COLORS } from './styles/theme';
+
+// Lazy load heavy components
+const ProfilePanel = lazy(() => import('./components/Profile/ProfilePanel').then(module => ({ default: module.ProfilePanel })));
+const PhysicsPlayground = lazy(() => import('./components/Playground/PhysicsPlayground').then(module => ({ default: module.PhysicsPlayground })));
 
 const API_URL =
     import.meta.env.VITE_API_URL ||
@@ -229,7 +231,13 @@ function AppContent() {
 
             <main id="main-content">
                 {currentPage === 'playground' ? (
-                    <PhysicsPlayground />
+                    <Suspense fallback={
+                        <div style={{ padding: '40px', textAlign: 'center', color: COLORS.TEXT_MUTED }}>
+                            Loading playground...
+                        </div>
+                    }>
+                        <PhysicsPlayground />
+                    </Suspense>
                 ) : (
                     <>
                         <TaskForm
@@ -338,16 +346,22 @@ function AppContent() {
                             </button>
                         </div>
 
-                        <ProfilePanel
-                            profile={profile}
-                            loading={profileLoading}
-                            error={profileError}
-                            onFetch={fetchProfile}
-                            onUpdate={async (updates) => {
-                                await updateProfile(updates);
-                                setShowProfilePanel(false);
-                            }}
-                        />
+                        <Suspense fallback={
+                            <div style={{ padding: '20px', textAlign: 'center', color: COLORS.TEXT_MUTED }}>
+                                Loading profile...
+                            </div>
+                        }>
+                            <ProfilePanel
+                                profile={profile}
+                                loading={profileLoading}
+                                error={profileError}
+                                onFetch={fetchProfile}
+                                onUpdate={async (updates) => {
+                                    await updateProfile(updates);
+                                    setShowProfilePanel(false);
+                                }}
+                            />
+                        </Suspense>
                     </div>
                 </div>
             )}

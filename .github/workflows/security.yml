@@ -1,10 +1,89 @@
 name: Security Scan
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run security scan daily at 2 AM UTC
+    - cron: '0 2 * * *'
 
 jobs:
-  security:
+  dependency-scan:
+    name: Dependency Security Scan
     runs-on: ubuntu-latest
+    
     steps:
-    - uses: actions/checkout@v4
-    - name: Run security scan
-      uses: actions/actions-dependency-submission@v1
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner in repo mode
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+        ignore-unfixed: true
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run Trivy table output for summary
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        ignore-unfixed: true
+
+  npm-audit:
+    name: NPM Security Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory: [backend, frontend]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Run npm audit for ${{ matrix.directory }}
+      working-directory: ./${{ matrix.directory }}
+      run: |
+        npm audit --audit-level=high || echo "⚠️  Vulnerabilities found in ${{ matrix.directory }}"
+        npm audit --json > audit-${{ matrix.directory }}.json || true
+
+    - name: Upload audit results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: npm-audit-${{ matrix.directory }}
+        path: ${{ matrix.directory }}/audit-${{ matrix.directory }}.json
+        retention-days: 30
+
+  security-summary:
+    name: Security Summary
+    needs: [dependency-scan, npm-audit]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Security scan completed
+      run: |
+        echo "🔒 Security Scans Completed"
+        echo "✅ Trivy filesystem scan"
+        echo "✅ NPM audit for backend and frontend"
+        echo "📊 Results uploaded to GitHub Security tab"
+

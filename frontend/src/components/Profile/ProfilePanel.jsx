@@ -21,12 +21,13 @@ export const ProfilePanel = ({
 }) => {
   const [isEditing, setIsEditing] = useState(false);
 
-  // Fetch profile on mount
+  // Fetch profile on mount only
   useEffect(() => {
-    if (onFetch && !profile) {
+    if (!profile) {
       onFetch();
     }
-  }, [onFetch, profile]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
 
   if (loading) {
     return (

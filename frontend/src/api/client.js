@@ -32,7 +32,6 @@ class APIClient {
 
             return await response.json();
         } catch (error) {
-            console.error(`API Error [${options.method || 'GET'} ${endpoint}]:`, error);
             throw error;
         }
     }

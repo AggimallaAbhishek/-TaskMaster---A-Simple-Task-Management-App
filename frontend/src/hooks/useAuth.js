@@ -21,7 +21,6 @@ export function useAuth() {
             const userData = await apiClient.checkAuth();
             setUser(userData);
         } catch (err) {
-            console.error('Auth check error:', err);
             setError('');
             setUser(null);
         } finally {
@@ -44,7 +43,6 @@ export function useAuth() {
                 window.location.href = `${API_URL}/auth/google`;
             }
         } catch (err) {
-            console.error('Login error:', err);
             setError('Failed to initiate login. Please try again.');
         } finally {
             setLoading(false);
@@ -59,7 +57,6 @@ export function useAuth() {
             // Redirect to home after logout
             window.location.href = '/';
         } catch (err) {
-            console.error('Logout error:', err);
             setError('Failed to logout');
         } finally {
             setLoading(false);
