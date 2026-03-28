@@ -33,6 +33,20 @@ function AppContent() {
     // Profile panel state
     const [showProfilePanel, setShowProfilePanel] = useState(false);
 
+    // Handle Escape key for closing modals
+    useEffect(() => {
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                if (showProfilePanel) {
+                    setShowProfilePanel(false);
+                }
+            }
+        };
+
+        document.addEventListener('keydown', handleEscape);
+        return () => document.removeEventListener('keydown', handleEscape);
+    }, [showProfilePanel]);
+
     // New task form state
     const [newTask, setNewTask] = useState('');
     const [newPriority, setNewPriority] = useState('medium');
@@ -360,6 +374,7 @@ function AppContent() {
                                     await updateProfile(updates);
                                     setShowProfilePanel(false);
                                 }}
+                                onDeleteAvatar={deleteAvatar}
                             />
                         </Suspense>
                     </div>

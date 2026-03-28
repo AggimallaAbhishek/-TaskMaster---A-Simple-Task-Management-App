@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { COLORS, COMMON_STYLES, PRIORITY_OPTIONS, CATEGORY_OPTIONS, getPriorityColor } from '../../styles/theme';
 
 function TaskItemComponent({
@@ -12,12 +12,27 @@ function TaskItemComponent({
     onToggleComplete,
     onDelete,
 }) {
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
     // Handle keyboard events for edit and delete buttons
     const handleKeyDown = (e, action) => {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             action();
         }
+    };
+
+    const handleDeleteClick = () => {
+        setShowDeleteConfirm(true);
+    };
+
+    const confirmDelete = () => {
+        onDelete();
+        setShowDeleteConfirm(false);
+    };
+
+    const cancelDelete = () => {
+        setShowDeleteConfirm(false);
     };
 
     if (isEditing) {
@@ -254,8 +269,8 @@ function TaskItemComponent({
                     Edit
                 </button>
                 <button
-                    onClick={onDelete}
-                    onKeyDown={(e) => handleKeyDown(e, onDelete)}
+                    onClick={handleDeleteClick}
+                    onKeyDown={(e) => handleKeyDown(e, handleDeleteClick)}
                     style={{
                         padding: '4px 8px',
                         backgroundColor: COLORS.DANGER,
@@ -271,6 +286,75 @@ function TaskItemComponent({
                     Delete
                 </button>
             </div>
+
+            {/* Delete confirmation modal */}
+            {showDeleteConfirm && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000,
+                    }}
+                    onClick={cancelDelete}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="delete-confirm-title"
+                >
+                    <div
+                        style={{
+                            backgroundColor: 'white',
+                            padding: '20px',
+                            borderRadius: '8px',
+                            maxWidth: '400px',
+                            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 id="delete-confirm-title" style={{ marginTop: 0, color: COLORS.TEXT }}>
+                            Delete Task?
+                        </h3>
+                        <p style={{ color: COLORS.TEXT_MUTED }}>
+                            Are you sure you want to delete "{task.title}"? This action cannot be undone.
+                        </p>
+                        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '20px' }}>
+                            <button
+                                onClick={cancelDelete}
+                                style={{
+                                    padding: '8px 16px',
+                                    backgroundColor: COLORS.BG_SECONDARY,
+                                    color: COLORS.TEXT,
+                                    border: `1px solid ${COLORS.BORDER}`,
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                }}
+                                autoFocus
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                style={{
+                                    padding: '8px 16px',
+                                    backgroundColor: COLORS.DANGER,
+                                    color: COLORS.TEXT_WHITE,
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </li>
     );
 }

@@ -18,6 +18,7 @@ export const ProfilePanel = ({
   error = null,
   onFetch,
   onUpdate,
+  onDeleteAvatar,
 }) => {
   const [isEditing, setIsEditing] = useState(false);
 
@@ -28,6 +29,16 @@ export const ProfilePanel = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run on mount
+
+  const handleDeleteAvatar = async () => {
+    if (window.confirm('Are you sure you want to delete your profile picture?')) {
+      try {
+        await onDeleteAvatar();
+      } catch (err) {
+        console.error('Failed to delete avatar:', err);
+      }
+    }
+  };
 
   if (loading) {
     return (
@@ -112,7 +123,7 @@ export const ProfilePanel = ({
         {profile.avatar_path && (
           <div style={{ marginBottom: '12px' }}>
             <strong>Avatar:</strong>
-            <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
               <img
                 src={profile.avatar_path}
                 alt="User avatar"
@@ -120,9 +131,25 @@ export const ProfilePanel = ({
                   width: '64px',
                   height: '64px',
                   borderRadius: '50%',
-                  marginTop: '8px',
                 }}
               />
+              {onDeleteAvatar && (
+                <button
+                  onClick={handleDeleteAvatar}
+                  style={{
+                    padding: '6px 12px',
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                  }}
+                  aria-label="Delete profile picture"
+                >
+                  Delete Picture
+                </button>
+              )}
             </div>
           </div>
         )}
