@@ -427,8 +427,8 @@ app.get('/auth/google/callback',
     }
 );
 
-// Demo authentication route for development (when Google OAuth not configured)
-if (process.env.NODE_ENV !== 'production' && !process.env.GOOGLE_CLIENT_ID) {
+// Demo authentication route for development (always available in non-production)
+if (process.env.NODE_ENV !== 'production') {
     app.get('/auth/demo', async (req, res) => {
         try {
             // Create or get demo user
@@ -457,7 +457,10 @@ if (process.env.NODE_ENV !== 'production' && !process.env.GOOGLE_CLIENT_ID) {
             res.redirect('/?error=demo_auth_failed');
         }
     });
+}
 
+// Fallback routes when Google OAuth not configured
+if (process.env.NODE_ENV !== 'production' && !process.env.GOOGLE_CLIENT_ID) {
     app.get('/auth/google', (req, res) => {
         // Redirect to demo mode since Google OAuth not configured
         res.redirect('/auth/demo');
