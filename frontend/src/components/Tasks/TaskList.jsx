@@ -29,30 +29,38 @@ export function TaskList({
 }) {
     return (
         <div>
-            <h2>Your Tasks ({tasks.length})</h2>
+            <h2 style={{
+                fontSize: TYPOGRAPHY.fontSize.lg,
+                fontWeight: TYPOGRAPHY.fontWeight.semibold,
+                color: 'var(--color-text-dark)',
+                marginBottom: SPACING.md,
+            }}>
+                Your Tasks ({tasks.length})
+            </h2>
 
             {error && (
                 <div
                     style={{
-                        backgroundColor: COLORS.BG_ERROR,
-                        color: COLORS.BG_ERROR_DARK,
-                        padding: '15px',
-                        borderRadius: '4px',
-                        marginBottom: '20px',
-                        border: `1px solid ${COLORS.GRAY_BORDER}`,
+                        backgroundColor: 'var(--color-bg-error)',
+                        color: 'var(--color-bg-error-dark)',
+                        padding: SPACING.md,
+                        borderRadius: 'var(--radius-md)',
+                        marginBottom: SPACING.lg,
+                        border: '1px solid var(--color-gray-border)',
                     }}
                 >
                     <strong>Error:</strong> {error}
                     <button
                         onClick={onRetry}
                         style={{
-                            marginLeft: '10px',
-                            padding: '5px 10px',
-                            background: COLORS.BG_ERROR_DARK,
-                            color: 'white',
+                            marginLeft: SPACING.sm,
+                            padding: `${SPACING.xs} ${SPACING.sm}`,
+                            backgroundColor: 'var(--color-bg-error-dark)',
+                            color: 'var(--color-text-white)',
                             border: 'none',
-                            borderRadius: '3px',
+                            borderRadius: 'var(--radius-sm)',
                             cursor: 'pointer',
+                            fontSize: TYPOGRAPHY.fontSize.sm,
                         }}
                     >
                         Retry
@@ -61,7 +69,13 @@ export function TaskList({
             )}
 
             {loading ? (
-                <p>Loading tasks...</p>
+                <p style={{
+                    textAlign: 'center',
+                    color: 'var(--color-text-muted)',
+                    fontStyle: 'italic',
+                }}>
+                    Loading tasks...
+                </p>
             ) : (
                 <>
                     <FilterPanel
@@ -75,7 +89,11 @@ export function TaskList({
                     />
 
                     {filteredAndSortedTasks.length === 0 ? (
-                        <p style={{ textAlign: 'center', color: COLORS.TEXT_MUTED }}>
+                        <p style={{
+                            textAlign: 'center',
+                            color: 'var(--color-text-muted)',
+                            fontSize: TYPOGRAPHY.fontSize.base,
+                        }}>
                             {tasks.length === 0
                                 ? 'No tasks yet. Create one to get started!'
                                 : 'No tasks match your filters.'}
@@ -107,9 +125,9 @@ export function TaskList({
 
             <p
                 style={{
-                    marginTop: '20px',
-                    fontSize: '12px',
-                    color: COLORS.TEXT_MUTED,
+                    marginTop: SPACING.lg,
+                    fontSize: TYPOGRAPHY.fontSize.xs,
+                    color: 'var(--color-text-muted)',
                 }}
             >
                 <strong>Backend URL:</strong> {apiUrl}
