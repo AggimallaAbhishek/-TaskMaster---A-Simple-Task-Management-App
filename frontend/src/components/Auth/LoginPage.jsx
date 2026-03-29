@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { COLORS } from '../../styles/theme';
 
-export function LoginPage({ onGoogleLogin, loading, error }) {
+export function LoginPage({ onGoogleLogin, loading, error, onShowTerms, onShowPrivacy }) {
+    const [showLinks, setShowLinks] = useState(false);
     return (
         <div
             style={{
@@ -228,13 +229,49 @@ export function LoginPage({ onGoogleLogin, loading, error }) {
                         }}
                     >
                         By signing in, you agree to our{' '}
-                        <span style={{ color: '#667eea', cursor: 'pointer' }}>
+                        <a
+                            href="#"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                onShowTerms?.();
+                            }}
+                            style={{
+                                color: '#667eea',
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                                fontSize: 'inherit',
+                            }}
+                            onMouseEnter={(e) => {
+                                e.target.style.color = '#5568d3';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.target.style.color = '#667eea';
+                            }}
+                        >
                             Terms of Service
-                        </span>{' '}
+                        </a>{' '}
                         and{' '}
-                        <span style={{ color: '#667eea', cursor: 'pointer' }}>
+                        <a
+                            href="#"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                onShowPrivacy?.();
+                            }}
+                            style={{
+                                color: '#667eea',
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                                fontSize: 'inherit',
+                            }}
+                            onMouseEnter={(e) => {
+                                e.target.style.color = '#5568d3';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.target.style.color = '#667eea';
+                            }}
+                        >
                             Privacy Policy
-                        </span>
+                        </a>
                     </p>
                 </div>
             </div>

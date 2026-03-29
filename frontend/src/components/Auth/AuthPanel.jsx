@@ -1,7 +1,7 @@
 import React from 'react';
 import { COLORS } from '../../styles/theme';
 
-export function AuthPanel({ user, loading, onLogin, onLogout, onSettings }) {
+export function AuthPanel({ user, loading, onLogin, onLogout, onSettings, onToggleTheme, isDarkMode }) {
     return (
         <header
             style={{
@@ -41,6 +41,32 @@ export function AuthPanel({ user, loading, onLogin, onLogout, onSettings }) {
                         </span>
                     ) : (
                         <>
+                            {onToggleTheme && (
+                                <button
+                                    onClick={onToggleTheme}
+                                    style={{
+                                        padding: '8px 16px',
+                                        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                                        color: 'white',
+                                        border: '1px solid rgba(255, 255, 255, 0.5)',
+                                        borderRadius: '4px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: 500,
+                                        transition: 'all 0.2s ease',
+                                    }}
+                                    onMouseEnter={(e) => {
+                                        e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                        e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                                    }}
+                                    aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                                    title={isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                                >
+                                    {isDarkMode ? '☀️ Light' : '🌙 Dark'}
+                                </button>
+                            )}
                             {user ? (
                                 <>
                                     <span style={{ fontSize: '14px' }}>

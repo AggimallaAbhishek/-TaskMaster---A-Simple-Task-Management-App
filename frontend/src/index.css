@@ -6,6 +6,31 @@
 
 html {
     scroll-behavior: smooth;
+    --color-bg-primary: #f5f5f5;
+    --color-bg-secondary: #ffffff;
+    --color-text-primary: #333;
+    --color-text-secondary: #666;
+    --color-border: #ddd;
+    --color-shadow: rgba(0, 0, 0, 0.1);
+    --color-shadow-hover: rgba(0, 0, 0, 0.15);
+    --color-header-start: #667eea;
+    --color-header-end: #764ba2;
+    --color-input-focus: rgba(102, 126, 234, 0.1);
+    --color-button-hover: #5568d3;
+}
+
+html[data-theme='dark'] {
+    --color-bg-primary: #1a1a1a;
+    --color-bg-secondary: #2d2d2d;
+    --color-text-primary: #e4e4e4;
+    --color-text-secondary: #a0a0a0;
+    --color-border: #444;
+    --color-shadow: rgba(0, 0, 0, 0.3);
+    --color-shadow-hover: rgba(0, 0, 0, 0.5);
+    --color-header-start: #5a67d8;
+    --color-header-end: #6b46c1;
+    --color-input-focus: rgba(90, 103, 216, 0.2);
+    --color-button-hover: #4c51bf;
 }
 
 body {
@@ -14,9 +39,10 @@ body {
         sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    background-color: #f5f5f5;
-    color: #333;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
     line-height: 1.6;
+    transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 #root {
@@ -43,10 +69,10 @@ body {
 
 /* Main header styling */
 header {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(135deg, var(--color-header-start) 0%, var(--color-header-end) 100%);
     color: white;
     padding: 20px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 8px var(--color-shadow);
 }
 
 header h1 {
@@ -65,7 +91,7 @@ header h1 {
 .header {
     text-align: center;
     margin-bottom: 30px;
-    color: #2c3e50;
+    color: var(--color-text-primary);
 }
 
 .task-form {
@@ -78,21 +104,24 @@ header h1 {
 .task-input {
     flex: 1;
     padding: 12px;
-    border: 2px solid #ddd;
+    border: 2px solid var(--color-border);
     border-radius: 6px;
     font-size: 16px;
     min-width: 200px;
+    background-color: var(--color-bg-secondary);
+    color: var(--color-text-primary);
+    transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .task-input:focus {
     outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    border-color: var(--color-header-start);
+    box-shadow: 0 0 0 3px var(--color-input-focus);
 }
 
 .add-button {
     padding: 12px 24px;
-    background-color: #667eea;
+    background-color: var(--color-header-start);
     color: white;
     border: none;
     border-radius: 6px;
@@ -103,7 +132,7 @@ header h1 {
 }
 
 .add-button:hover {
-    background-color: #5568d3;
+    background-color: var(--color-button-hover);
 }
 
 .add-button:active {
@@ -115,24 +144,24 @@ header h1 {
 }
 
 .task-item {
-    background: white;
+    background: var(--color-bg-secondary);
     padding: 15px;
     margin: 10px 0;
     border-radius: 6px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px var(--color-shadow);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: box-shadow 0.2s ease;
+    transition: box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .task-item:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 12px var(--color-shadow-hover);
 }
 
 .loading {
     text-align: center;
-    color: #666;
+    color: var(--color-text-secondary);
     font-style: italic;
     padding: 40px 20px;
 }
@@ -144,6 +173,11 @@ header h1 {
     border-radius: 6px;
     margin-bottom: 20px;
     border-left: 4px solid #c62828;
+}
+
+html[data-theme='dark'] .error {
+    background-color: #3d2424;
+    color: #ff9999;
 }
 
 .success {

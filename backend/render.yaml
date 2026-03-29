@@ -3,11 +3,35 @@ services:
     name: taskmaster-backend
     env: node
     plan: free
+    region: oregon
     rootDirectory: backend
     buildCommand: npm install
     startCommand: npm start
+    healthCheckPath: /health
+    healthCheckInterval: 30
+    numInstances: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: LOG_LEVEL
+        value: info
+      - key: SKIP_RATE_LIMIT
+        value: false
+      - key: DB_POOL_MIN
+        value: 2
+      - key: DB_POOL_MAX
+        value: 10
+      - key: DB_POOL_IDLE_TIMEOUT
+        value: 30000
+      - key: DB_POOL_CONNECT_TIMEOUT
+        value: 5000
+      - key: DB_STATEMENT_TIMEOUT
+        value: 30000
+    envVarsToDeploy:
+      - DATABASE_URL
+      - SESSION_SECRET
+      - GOOGLE_CLIENT_ID
+      - GOOGLE_CLIENT_SECRET
+      - FRONTEND_URL

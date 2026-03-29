@@ -8,28 +8,69 @@ const PgSession = require('connect-pg-simple')(session);
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const { 
+    ERROR_CODES, 
+    formatErrorResponse, 
+    validateISODate, 
+    validatePriority, 
+    validateCategory, 
+    validatePagination 
+} = require('./utils/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // ========== ENVIRONMENT VALIDATION ==========
-const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_NAME', 'SESSION_SECRET'];
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
-
-if (missingEnvVars.length > 0) {
-    if (process.env.NODE_ENV === 'production') {
-        console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
-        process.exit(1);
-    } else {
-        console.warn('⚠️  Missing environment variables (dev mode):', missingEnvVars.join(', '));
+// Always validate environment variables (development and production)
+const validateEnvironment = () => {
+    const isDev = process.env.NODE_ENV !== 'production';
+    
+    // Required in both dev and production
+    const alwaysRequired = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_NAME'];
+    
+    // Required only in production
+    const productionOnly = ['SESSION_SECRET', 'DATABASE_URL'];
+    
+    // Check always-required variables
+    const missingAlways = alwaysRequired.filter(varName => !process.env[varName]);
+    
+    if (missingAlways.length > 0) {
+        console.error('❌ CRITICAL: Missing required environment variables:', missingAlways.join(', '));
+        if (!isDev) {
+            process.exit(1);
+        }
     }
-}
+    
+    // Check production-only variables
+    if (!isDev) {
+        const missingProduction = productionOnly.filter(varName => !process.env[varName]);
+        if (missingProduction.length > 0) {
+            console.error('❌ FATAL: Missing production environment variables:', missingProduction.join(', '));
+            process.exit(1);
+        }
+    }
+    
+    // Validate PORT is numeric
+    if (isNaN(parseInt(PORT, 10))) {
+        console.error('❌ Invalid PORT. Must be a number, got:', PORT);
+        process.exit(1);
+    }
+    
+    // Validate DB_PORT is numeric
+    if (process.env.DB_PORT && isNaN(parseInt(process.env.DB_PORT, 10))) {
+        console.error('❌ Invalid DB_PORT. Must be a number, got:', process.env.DB_PORT);
+        process.exit(1);
+    }
+    
+    // Session secret length check (in production)
+    if (!isDev && process.env.SESSION_SECRET && process.env.SESSION_SECRET.length < 32) {
+        console.warn('⚠️  SESSION_SECRET should be at least 32 characters for security. Current length:', process.env.SESSION_SECRET.length);
+    }
+    
+    console.log('✅ Environment variables validated successfully');
+};
 
-// CRITICAL: SESSION_SECRET must be set in production
-if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
-    console.error('❌ FATAL: SESSION_SECRET is required in production');
-    process.exit(1);
-}
+validateEnvironment();
 
 // ========== DATABASE CONFIGURATION WITH POOLING ==========
 const pool = new Pool({
@@ -325,6 +366,32 @@ const initializeDatabase = async () => {
             )
         `);
 
+        // Create task_recurrence table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS task_recurrence (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                frequency VARCHAR(20) NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly', 'yearly')),
+                interval INTEGER DEFAULT 1 CHECK (interval > 0),
+                end_date TIMESTAMP WITH TIME ZONE,
+                last_recurrence_date TIMESTAMP WITH TIME ZONE,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Create task_tags table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS task_tags (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                tag VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, tag)
+            )
+        `);
+
         // Create filter_presets table if not exists
         await pool.query(`
             CREATE TABLE IF NOT EXISTS filter_presets (
@@ -344,6 +411,10 @@ const initializeDatabase = async () => {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_recurrence_task_id ON task_recurrence(task_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_recurrence_active ON task_recurrence(is_active)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_tags_task_id ON task_tags(task_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_filter_presets_user_id ON filter_presets(user_id)`);
 
         console.log('✅ Database initialized successfully (tables and indexes created if needed)');
@@ -569,30 +640,36 @@ const ensureAuthenticated = (req, res, next) => {
 };
 
 // ========== INPUT VALIDATION HELPERS ==========
-const VALID_PRIORITIES = ['low', 'medium', 'high'];
-const VALID_CATEGORIES = ['general', 'work', 'personal', 'shopping', 'health', 'finance', 'education', 'other'];
 
-const validatePriority = (priority) => {
-    if (priority && !VALID_PRIORITIES.includes(priority)) {
-        return `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`;
-    }
-    return null;
+// Validation helpers
+const validatePriorityValue = (priority) => {
+    if (!priority) return null;
+    const validation = validatePriority(priority);
+    return validation.valid ? null : formatErrorResponse(
+        ERROR_CODES.INVALID_INPUT,
+        validation.error
+    );
 };
 
-const validateCategory = (category) => {
-    // Allow any category but sanitize
-    if (category && (typeof category !== 'string' || category.length > 100)) {
-        return 'Category must be a string with max 100 characters';
-    }
-    return null;
+const validateCategoryValue = (category) => {
+    if (!category) return null;
+    const validation = validateCategory(category);
+    return validation.valid ? null : formatErrorResponse(
+        ERROR_CODES.INVALID_INPUT,
+        validation.error
+    );
 };
 
-const validateDueDate = (dueDate) => {
-    if (dueDate) {
-        const date = new Date(dueDate);
-        if (isNaN(date.getTime())) {
-            return 'Invalid date format. Use ISO 8601 format (YYYY-MM-DDTHH:mm:ss.sssZ)';
-        }
+// Validate due date format (ISO 8601)
+const validateDueDateFormat = (dueDate) => {
+    if (!dueDate) return null;
+    
+    const dateValidation = validateISODate(dueDate);
+    if (dateValidation && !dateValidation.valid) {
+        return formatErrorResponse(
+            ERROR_CODES.INVALID_DATE_FORMAT,
+            dateValidation.error
+        );
     }
     return null;
 };
@@ -650,13 +727,14 @@ app.get('/api/tasks', ensureAuthenticated, async (req, res) => {
 
         // Pagination
         if (page && limit) {
-            const pageNum = parseInt(page, 10);
-            const limitNum = parseInt(limit, 10);
-            
-            if (isNaN(pageNum) || isNaN(limitNum) || pageNum < 1 || limitNum < 1) {
-                return res.status(400).json({ error: 'Invalid pagination parameters' });
+            const validation = validatePagination(page, limit);
+            if (!validation.valid) {
+                return res.status(400).json(
+                    formatErrorResponse(ERROR_CODES.INVALID_PAGINATION, validation.error)
+                );
             }
 
+            const { page: pageNum, limit: limitNum } = validation;
             const offset = (pageNum - 1) * limitNum;
             
             // Get total count
@@ -701,12 +779,20 @@ app.get('/api/tasks/search', ensureAuthenticated, async (req, res) => {
     const { q, limit = 50 } = req.query;
 
     if (!q || q.trim() === '') {
-        return res.status(400).json({ error: 'Search query (q) is required' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Search query (q) is required')
+        );
     }
 
     const searchLimit = parseInt(limit, 10);
     if (isNaN(searchLimit) || searchLimit < 1 || searchLimit > 100) {
-        return res.status(400).json({ error: 'Limit must be between 1 and 100' });
+        return res.status(400).json(
+            formatErrorResponse(
+                ERROR_CODES.INVALID_PARAMETER, 
+                'Limit must be between 1 and 100',
+                { limit: searchLimit }
+            )
+        );
     }
 
     try {
@@ -727,7 +813,9 @@ app.get('/api/tasks/search', ensureAuthenticated, async (req, res) => {
         });
     } catch (error) {
         console.error('Error searching tasks:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error searching tasks')
+        );
     }
 });
 
@@ -737,23 +825,25 @@ app.post('/api/tasks', ensureAuthenticated, async (req, res) => {
 
     // Validate required fields
     if (!title || title.trim() === '') {
-        return res.status(400).json({ error: 'Task title is required' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Task title is required')
+        );
     }
 
     // Validate optional fields
-    const priorityError = validatePriority(priority);
-    if (priorityError) {
-        return res.status(400).json({ error: priorityError });
+    const priorityValidation = validatePriorityValue(priority);
+    if (priorityValidation) {
+        return res.status(400).json(priorityValidation);
     }
 
-    const categoryError = validateCategory(category);
-    if (categoryError) {
-        return res.status(400).json({ error: categoryError });
+    const categoryValidation = validateCategoryValue(category);
+    if (categoryValidation) {
+        return res.status(400).json(categoryValidation);
     }
 
-    const dueDateError = validateDueDate(dueDate);
-    if (dueDateError) {
-        return res.status(400).json({ error: dueDateError });
+    const dueDateValidation = validateDueDateFormat(dueDate);
+    if (dueDateValidation) {
+        return res.status(400).json(dueDateValidation);
     }
 
     try {
@@ -1231,6 +1321,353 @@ app.post('/api/filter-presets/:id/apply', ensureAuthenticated, async (req, res) 
     } catch (error) {
         console.error('Error applying filter preset:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// ========== TAG ENDPOINTS ==========
+
+// GET /api/tasks/:id/tags - Get all tags for a task
+app.get('/api/tasks/:id/tags', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Get tags
+        const result = await pool.query(
+            'SELECT tag FROM task_tags WHERE task_id = $1 ORDER BY tag ASC',
+            [taskId]
+        );
+
+        res.json({ tags: result.rows.map(r => r.tag) });
+    } catch (error) {
+        console.error('Error fetching task tags:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error fetching tags')
+        );
+    }
+});
+
+// POST /api/tasks/:id/tags - Add a tag to a task
+app.post('/api/tasks/:id/tags', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        const { tag } = req.body;
+
+        if (!tag || typeof tag !== 'string' || tag.trim() === '') {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Tag is required and must be a non-empty string')
+            );
+        }
+
+        const trimmedTag = tag.trim().toLowerCase();
+
+        if (trimmedTag.length > 100) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'Tag must be 100 characters or less')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Add tag (ignore duplicate)
+        const result = await pool.query(
+            `INSERT INTO task_tags (task_id, tag)
+             VALUES ($1, $2)
+             ON CONFLICT (task_id, tag) DO UPDATE
+             SET tag = EXCLUDED.tag
+             RETURNING tag`,
+            [taskId, trimmedTag]
+        );
+
+        res.status(201).json({ tag: result.rows[0].tag });
+    } catch (error) {
+        console.error('Error adding task tag:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error adding tag')
+        );
+    }
+});
+
+// DELETE /api/tasks/:id/tags/:tag - Remove a tag from a task
+app.delete('/api/tasks/:id/tags/:tag', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        const tag = decodeURIComponent(req.params.tag).trim().toLowerCase();
+
+        if (!tag) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Tag is required')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Delete tag
+        const result = await pool.query(
+            'DELETE FROM task_tags WHERE task_id = $1 AND tag = $2 RETURNING tag',
+            [taskId, tag]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.NOT_FOUND, 'Tag not found on this task')
+            );
+        }
+
+        res.json({ message: 'Tag removed', tag: result.rows[0].tag });
+    } catch (error) {
+        console.error('Error removing task tag:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error removing tag')
+        );
+    }
+});
+
+// GET /api/tasks/tags/search - Search tasks by tag
+app.get('/api/tasks/tags/search', ensureAuthenticated, async (req, res) => {
+    try {
+        const { tag } = req.query;
+
+        if (!tag || tag.trim() === '') {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Tag parameter is required')
+            );
+        }
+
+        const searchTag = tag.trim().toLowerCase();
+
+        // Find tasks with this tag
+        const result = await pool.query(
+            `SELECT DISTINCT t.* FROM tasks t
+             INNER JOIN task_tags tt ON t.id = tt.task_id
+             WHERE t.user_id = $1 AND tt.tag = $2
+             ORDER BY t.created_at DESC`,
+            [req.user.id, searchTag]
+        );
+
+        res.json({ tag: searchTag, count: result.rows.length, tasks: result.rows });
+    } catch (error) {
+        console.error('Error searching by tag:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error searching by tag')
+        );
+    }
+});
+
+// ========== RECURRENCE ENDPOINTS ==========
+
+// GET /api/tasks/:id/recurrence - Get recurrence settings for a task
+app.get('/api/tasks/:id/recurrence', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Get recurrence settings
+        const result = await pool.query(
+            'SELECT * FROM task_recurrence WHERE task_id = $1',
+            [taskId]
+        );
+
+        res.json(result.rows.length > 0 ? result.rows[0] : null);
+    } catch (error) {
+        console.error('Error fetching task recurrence:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error fetching recurrence')
+        );
+    }
+});
+
+// POST /api/tasks/:id/recurrence - Set or update recurrence for a task
+app.post('/api/tasks/:id/recurrence', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        const { frequency, interval = 1, endDate } = req.body;
+
+        // Validate frequency
+        const validFrequencies = ['daily', 'weekly', 'monthly', 'yearly'];
+        if (!frequency || !validFrequencies.includes(frequency)) {
+            return res.status(400).json(
+                formatErrorResponse(
+                    ERROR_CODES.INVALID_INPUT,
+                    `Invalid frequency. Must be one of: ${validFrequencies.join(', ')}`
+                )
+            );
+        }
+
+        // Validate interval
+        if (!Number.isInteger(interval) || interval < 1) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'Interval must be a positive integer')
+            );
+        }
+
+        // Validate endDate if provided
+        if (endDate) {
+            const dateValidation = validateISODate(endDate);
+            if (dateValidation && !dateValidation.valid) {
+                return res.status(400).json(
+                    formatErrorResponse(ERROR_CODES.INVALID_DATE_FORMAT, dateValidation.error)
+                );
+            }
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Check if recurrence already exists
+        const existingResult = await pool.query(
+            'SELECT id FROM task_recurrence WHERE task_id = $1',
+            [taskId]
+        );
+
+        let result;
+        if (existingResult.rows.length > 0) {
+            // Update existing recurrence
+            result = await pool.query(
+                `UPDATE task_recurrence 
+                 SET frequency = $1, interval = $2, end_date = $3, updated_at = CURRENT_TIMESTAMP
+                 WHERE task_id = $4 
+                 RETURNING *`,
+                [frequency, interval, endDate || null, taskId]
+            );
+        } else {
+            // Create new recurrence
+            result = await pool.query(
+                `INSERT INTO task_recurrence (task_id, frequency, interval, end_date)
+                 VALUES ($1, $2, $3, $4)
+                 RETURNING *`,
+                [taskId, frequency, interval, endDate || null]
+            );
+        }
+
+        res.status(existingResult.rows.length > 0 ? 200 : 201).json(result.rows[0]);
+    } catch (error) {
+        console.error('Error setting task recurrence:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error setting recurrence')
+        );
+    }
+});
+
+// DELETE /api/tasks/:id/recurrence - Remove recurrence from a task
+app.delete('/api/tasks/:id/recurrence', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Delete recurrence
+        const result = await pool.query(
+            'DELETE FROM task_recurrence WHERE task_id = $1 RETURNING *',
+            [taskId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.NOT_FOUND, 'Recurrence settings not found')
+            );
+        }
+
+        res.json({ message: 'Recurrence removed', recurrence: result.rows[0] });
+    } catch (error) {
+        console.error('Error deleting task recurrence:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error removing recurrence')
+        );
     }
 });
 

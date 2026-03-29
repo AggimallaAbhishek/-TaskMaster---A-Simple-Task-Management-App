@@ -1,8 +1,10 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
-import { useAuth, useTasks, useFilter, useProfile } from './hooks';
+import { useAuth, useTasks, useFilter, useProfile, useTheme } from './hooks';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthPanel } from './components/Auth/AuthPanel';
 import { LoginPage } from './components/Auth/LoginPage';
+import { TermsOfService } from './components/Auth/TermsOfService';
+import { PrivacyPolicy } from './components/Auth/PrivacyPolicy';
 import { TaskForm } from './components/Tasks/TaskForm';
 import { TaskList } from './components/Tasks/TaskList';
 import { SkipToMainContent } from './components/Accessible';
@@ -20,6 +22,7 @@ const API_URL =
 function AppContent() {
     const { user, loading: authLoading, login, logout, error: authError } = useAuth();
     const { profile, loading: profileLoading, error: profileError, fetchProfile, updateProfile, deleteAvatar } = useProfile();
+    const { isDarkMode, toggleTheme } = useTheme();
     const [tasks, setTasks] = useState([]);
     const { loading, error, setError, fetchTasks, addTask, updateTask, deleteTask } = useTasks(
         tasks,
@@ -32,6 +35,9 @@ function AppContent() {
 
     // Profile panel state
     const [showProfilePanel, setShowProfilePanel] = useState(false);
+
+    // Policy pages state
+    const [showPolicyPage, setShowPolicyPage] = useState(null); // 'terms' or 'privacy'
 
     // Handle Escape key for closing modals
     useEffect(() => {
@@ -158,11 +164,64 @@ function AppContent() {
 
     // Show login page when not authenticated
     if (!user) {
+        // Show policy pages when requested
+        if (showPolicyPage === 'terms') {
+            return (
+                <div>
+                    <TermsOfService />
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                        <button
+                            onClick={() => setShowPolicyPage(null)}
+                            style={{
+                                padding: '10px 20px',
+                                backgroundColor: '#667eea',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 600,
+                            }}
+                        >
+                            Back to Login
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        if (showPolicyPage === 'privacy') {
+            return (
+                <div>
+                    <PrivacyPolicy />
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                        <button
+                            onClick={() => setShowPolicyPage(null)}
+                            style={{
+                                padding: '10px 20px',
+                                backgroundColor: '#667eea',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 600,
+                            }}
+                        >
+                            Back to Login
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <LoginPage
                 onGoogleLogin={login}
                 loading={authLoading}
                 error={authError}
+                onShowTerms={() => setShowPolicyPage('terms')}
+                onShowPrivacy={() => setShowPolicyPage('privacy')}
             />
         );
     }
@@ -186,6 +245,8 @@ function AppContent() {
                 onLogin={login}
                 onLogout={logout}
                 onSettings={() => setShowProfilePanel(true)}
+                onToggleTheme={toggleTheme}
+                isDarkMode={isDarkMode}
             />
 
             <div
