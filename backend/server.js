@@ -8,6 +8,8 @@ const PgSession = require('connect-pg-simple')(session);
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const multer = require('multer');
+const path = require('path');
 const { 
     ERROR_CODES, 
     formatErrorResponse, 
@@ -16,6 +18,15 @@ const {
     validateCategory, 
     validatePagination 
 } = require('./utils/errorHandler');
+const {
+    isValidFileType,
+    sanitizeFilename,
+    MAX_FILE_SIZE,
+    ensureUploadsDir,
+    deleteFile,
+    getFilePath,
+    UPLOADS_DIR,
+} = require('./utils/fileHandler');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -143,6 +154,40 @@ const authLimiter = rateLimit({
 // Apply rate limiting to API routes
 app.use('/api/', apiLimiter);
 app.use('/auth/', authLimiter);
+
+// ========== FILE UPLOAD CONFIGURATION ==========
+// Configure multer for file uploads
+const uploadLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: isDevelopment ? 50 : 10, // Max 10 uploads per 15 minutes (production)
+    message: { error: 'Too many upload attempts, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => isDevelopment && process.env.SKIP_RATE_LIMIT === 'true',
+});
+
+app.use('/api/tasks/:id/attachments', uploadLimiter);
+
+// Initialize uploads directory
+ensureUploadsDir().catch(err => {
+    console.error('Failed to initialize uploads directory:', err);
+});
+
+// Configure multer storage
+const upload = multer({
+    dest: UPLOADS_DIR,
+    limits: {
+        fileSize: MAX_FILE_SIZE,
+        files: 1, // One file at a time
+    },
+    fileFilter: (req, file, cb) => {
+        // Validate MIME type
+        if (!isValidFileType(file.mimetype)) {
+            return cb(new Error(`Invalid file type: ${file.mimetype}`));
+        }
+        cb(null, true);
+    },
+});
 
 // ========== LOGGING MIDDLEWARE ==========
 app.use((req, res, next) => {
@@ -406,6 +451,45 @@ const initializeDatabase = async () => {
             )
         `);
 
+        // Create subtasks table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS subtasks (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                completed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Create task_dependencies table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS task_dependencies (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, depends_on_id),
+                CHECK (task_id != depends_on_id)
+            )
+        `);
+
+        // Create attachments table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS attachments (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                filename VARCHAR(255) NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                file_path VARCHAR(500) NOT NULL,
+                file_size INTEGER NOT NULL,
+                mime_type VARCHAR(100),
+                uploaded_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
         // Create indexes for better query performance (IF NOT EXISTS)
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks(completed)`);
@@ -416,6 +500,12 @@ const initializeDatabase = async () => {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_tags_task_id ON task_tags(task_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_tags_tag ON task_tags(tag)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_filter_presets_user_id ON filter_presets(user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_subtasks_task_id ON subtasks(task_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_subtasks_completed ON subtasks(completed)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_dependencies_task_id ON task_dependencies(task_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on ON task_dependencies(depends_on_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_attachments_task_id ON attachments(task_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_attachments_uploaded_by ON attachments(uploaded_by)`);
 
         console.log('✅ Database initialized successfully (tables and indexes created if needed)');
     } catch (error) {
@@ -558,7 +648,9 @@ app.get('/auth/user', (req, res) => {
         const { id, username, email, picture } = req.user;
         res.json({ id, username, email, picture });
     } else {
-        res.status(401).json({ error: 'Not authenticated' });
+        res.status(401).json(
+            formatErrorResponse(ERROR_CODES.NOT_AUTHENTICATED, 'User not authenticated')
+        );
     }
 });
 
@@ -636,7 +728,9 @@ const ensureAuthenticated = (req, res, next) => {
     if (req.isAuthenticated()) {
         return next();
     }
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json(
+        formatErrorResponse(ERROR_CODES.UNAUTHORIZED, 'User is not authenticated')
+    );
 };
 
 // ========== INPUT VALIDATION HELPERS ==========
@@ -864,28 +958,34 @@ app.post('/api/tasks', ensureAuthenticated, async (req, res) => {
 app.put('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
     const taskId = parseInt(req.params.id, 10);
     if (isNaN(taskId)) {
-        return res.status(400).json({ error: 'Invalid task ID' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+        );
     }
     const { title, completed, priority, category, dueDate } = req.body;
 
     // Validate input
     if (title === undefined && completed === undefined && priority === undefined && category === undefined && dueDate === undefined) {
-        return res.status(400).json({ error: 'At least one field must be provided for update' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'At least one field must be provided for update')
+        );
     }
 
     if (title !== undefined && (!title || title.trim() === '')) {
-        return res.status(400).json({ error: 'Task title is required' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Task title is required')
+        );
     }
 
     // Validate optional fields
-    const priorityError = validatePriority(priority);
+    const priorityError = validatePriorityValue(priority);
     if (priorityError) {
-        return res.status(400).json({ error: priorityError });
+        return res.status(400).json(priorityError);
     }
 
-    const dueDateError = validateDueDate(dueDate);
+    const dueDateError = validateDueDateFormat(dueDate);
     if (dueDateError) {
-        return res.status(400).json({ error: dueDateError });
+        return res.status(400).json(dueDateError);
     }
 
     try {
@@ -934,7 +1034,9 @@ app.put('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
         res.json(updatedTask);
     } catch (error) {
         console.error('Error updating task:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error updating task')
+        );
     }
 });
 
@@ -942,7 +1044,9 @@ app.put('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
 app.delete('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
     const taskId = parseInt(req.params.id, 10);
     if (isNaN(taskId)) {
-        return res.status(400).json({ error: 'Invalid task ID' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+        );
     }
     
     try {
@@ -952,14 +1056,18 @@ app.delete('/api/tasks/:id', ensureAuthenticated, async (req, res) => {
         );
         
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Task not found or unauthorized' });
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found or unauthorized')
+            );
         }
 
         const deletedTask = result.rows[0];
         res.json({ message: 'Task deleted successfully', task: deletedTask });
     } catch (error) {
         console.error('Error deleting task:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error deleting task')
+        );
     }
 });
 
@@ -968,13 +1076,17 @@ app.post('/api/tasks/bulk-delete', ensureAuthenticated, async (req, res) => {
     const { taskIds } = req.body;
 
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
-        return res.status(400).json({ error: 'taskIds must be a non-empty array' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'taskIds must be a non-empty array')
+        );
     }
 
     // Validate all IDs are numbers
     const validIds = taskIds.filter(id => !isNaN(parseInt(id, 10))).map(id => parseInt(id, 10));
     if (validIds.length === 0) {
-        return res.status(400).json({ error: 'No valid task IDs provided' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'No valid task IDs provided')
+        );
     }
 
     try {
@@ -991,7 +1103,9 @@ app.post('/api/tasks/bulk-delete', ensureAuthenticated, async (req, res) => {
         });
     } catch (error) {
         console.error('Error bulk deleting tasks:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error bulk deleting tasks')
+        );
     }
 });
 
@@ -1000,11 +1114,15 @@ app.post('/api/tasks/bulk-update', ensureAuthenticated, async (req, res) => {
     const { taskIds, updates } = req.body;
 
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
-        return res.status(400).json({ error: 'taskIds must be a non-empty array' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'taskIds must be a non-empty array')
+        );
     }
 
     if (!updates || typeof updates !== 'object') {
-        return res.status(400).json({ error: 'updates must be an object' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'updates must be an object')
+        );
     }
 
     // Validate allowed update fields
@@ -1012,21 +1130,25 @@ app.post('/api/tasks/bulk-update', ensureAuthenticated, async (req, res) => {
     const updateFields = Object.keys(updates).filter(key => allowedFields.includes(key));
     
     if (updateFields.length === 0) {
-        return res.status(400).json({ error: 'No valid update fields provided. Allowed: completed, priority, category' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'No valid update fields provided. Allowed: completed, priority, category')
+        );
     }
 
     // Validate priority if provided
     if (updates.priority) {
-        const priorityError = validatePriority(updates.priority);
-        if (priorityError) {
-            return res.status(400).json({ error: priorityError });
+        const priorityValidation = validatePriorityValue(updates.priority);
+        if (priorityValidation) {
+            return res.status(400).json(priorityValidation);
         }
     }
 
     // Validate all IDs are numbers
     const validIds = taskIds.filter(id => !isNaN(parseInt(id, 10))).map(id => parseInt(id, 10));
     if (validIds.length === 0) {
-        return res.status(400).json({ error: 'No valid task IDs provided' });
+        return res.status(400).json(
+            formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'No valid task IDs provided')
+        );
     }
 
     try {
@@ -1049,7 +1171,9 @@ app.post('/api/tasks/bulk-update', ensureAuthenticated, async (req, res) => {
         });
     } catch (error) {
         console.error('Error bulk updating tasks:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error bulk updating tasks')
+        );
     }
 });
 
@@ -1667,6 +1791,694 @@ app.delete('/api/tasks/:id/recurrence', ensureAuthenticated, async (req, res) =>
         console.error('Error deleting task recurrence:', error);
         res.status(500).json(
             formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error removing recurrence')
+        );
+    }
+});
+
+// ==================== SUBTASKS ENDPOINTS ====================
+
+// GET /api/tasks/:id/subtasks - List all subtasks for a task
+app.get('/api/tasks/:id/subtasks', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(
+            'SELECT id, title, completed, created_at, updated_at FROM subtasks WHERE task_id = $1 ORDER BY created_at ASC',
+            [taskId]
+        );
+
+        res.json({
+            task_id: taskId,
+            subtasks: result.rows,
+            total: result.rows.length
+        });
+    } catch (error) {
+        console.error('Error fetching subtasks:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error fetching subtasks')
+        );
+    }
+});
+
+// POST /api/tasks/:id/subtasks - Create a new subtask
+app.post('/api/tasks/:id/subtasks', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        const { title } = req.body;
+        if (!title || typeof title !== 'string' || title.trim() === '') {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'Title is required')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(
+            'INSERT INTO subtasks (task_id, title) VALUES ($1, $2) RETURNING *',
+            [taskId, title.trim()]
+        );
+
+        res.status(201).json({
+            message: 'Subtask created',
+            subtask: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error creating subtask:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error creating subtask')
+        );
+    }
+});
+
+// PUT /api/tasks/:id/subtasks/:subtask_id - Update a subtask
+app.put('/api/tasks/:id/subtasks/:subtask_id', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const subtaskId = parseInt(req.params.subtask_id, 10);
+
+        if (isNaN(taskId) || isNaN(subtaskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task or subtask ID')
+            );
+        }
+
+        const { title, completed } = req.body;
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Verify subtask belongs to task
+        const subtaskResult = await pool.query(
+            'SELECT * FROM subtasks WHERE id = $1 AND task_id = $2',
+            [subtaskId, taskId]
+        );
+
+        if (subtaskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.NOT_FOUND, 'Subtask not found')
+            );
+        }
+
+        const updates = [];
+        const values = [subtaskId];
+        let paramCount = 2;
+
+        if (title !== undefined && typeof title === 'string' && title.trim() !== '') {
+            updates.push(`title = $${paramCount}`);
+            values.push(title.trim());
+            paramCount++;
+        }
+
+        if (completed !== undefined && typeof completed === 'boolean') {
+            updates.push(`completed = $${paramCount}`);
+            values.push(completed);
+            paramCount++;
+        }
+
+        updates.push(`updated_at = CURRENT_TIMESTAMP`);
+
+        if (updates.length === 1) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'No valid fields to update')
+            );
+        }
+
+        const result = await pool.query(
+            `UPDATE subtasks SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
+            values
+        );
+
+        res.json({
+            message: 'Subtask updated',
+            subtask: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error updating subtask:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error updating subtask')
+        );
+    }
+});
+
+// DELETE /api/tasks/:id/subtasks/:subtask_id - Delete a subtask
+app.delete('/api/tasks/:id/subtasks/:subtask_id', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const subtaskId = parseInt(req.params.subtask_id, 10);
+
+        if (isNaN(taskId) || isNaN(subtaskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task or subtask ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(
+            'DELETE FROM subtasks WHERE id = $1 AND task_id = $2 RETURNING *',
+            [subtaskId, taskId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.NOT_FOUND, 'Subtask not found')
+            );
+        }
+
+        res.json({
+            message: 'Subtask deleted',
+            subtask: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error deleting subtask:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error deleting subtask')
+        );
+    }
+});
+
+// ==================== TASK DEPENDENCIES ENDPOINTS ====================
+
+// Helper function to detect circular dependencies
+const hasCircularDependency = async (taskId, dependsOnId, pool) => {
+    const visited = new Set();
+    const queue = [dependsOnId];
+
+    while (queue.length > 0) {
+        const currentId = queue.shift();
+        if (visited.has(currentId)) continue;
+        visited.add(currentId);
+
+        if (currentId === taskId) {
+            return true;
+        }
+
+        const result = await pool.query(
+            'SELECT depends_on_id FROM task_dependencies WHERE task_id = $1',
+            [currentId]
+        );
+
+        for (const row of result.rows) {
+            queue.push(row.depends_on_id);
+        }
+    }
+
+    return false;
+};
+
+// GET /api/tasks/:id/dependencies - List all dependencies for a task
+app.get('/api/tasks/:id/dependencies', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(`
+            SELECT 
+                td.id,
+                td.task_id,
+                td.depends_on_id,
+                t.title as depends_on_title,
+                t.completed as depends_on_completed,
+                t.priority as depends_on_priority,
+                td.created_at
+            FROM task_dependencies td
+            JOIN tasks t ON td.depends_on_id = t.id
+            WHERE td.task_id = $1
+            ORDER BY td.created_at ASC
+        `, [taskId]);
+
+        res.json({
+            task_id: taskId,
+            dependencies: result.rows,
+            total: result.rows.length
+        });
+    } catch (error) {
+        console.error('Error fetching dependencies:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error fetching dependencies')
+        );
+    }
+});
+
+// POST /api/tasks/:id/dependencies - Add a dependency
+app.post('/api/tasks/:id/dependencies', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const { depends_on_id } = req.body;
+        const dependsOnId = parseInt(depends_on_id, 10);
+
+        if (isNaN(taskId) || isNaN(dependsOnId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        if (taskId === dependsOnId) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_INPUT, 'A task cannot depend on itself')
+            );
+        }
+
+        // Verify both tasks belong to user
+        const tasksResult = await pool.query(
+            'SELECT id FROM tasks WHERE id IN ($1, $2) AND user_id = $3',
+            [taskId, dependsOnId, req.user.id]
+        );
+
+        if (tasksResult.rows.length !== 2) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'One or both tasks not found')
+            );
+        }
+
+        // Check for circular dependency
+        const isCircular = await hasCircularDependency(taskId, dependsOnId, pool);
+        if (isCircular) {
+            return res.status(409).json(
+                formatErrorResponse(ERROR_CODES.CIRCULAR_DEPENDENCY, 'Adding this dependency would create a circular reference')
+            );
+        }
+
+        // Check if dependency already exists
+        const existingResult = await pool.query(
+            'SELECT id FROM task_dependencies WHERE task_id = $1 AND depends_on_id = $2',
+            [taskId, dependsOnId]
+        );
+
+        if (existingResult.rows.length > 0) {
+            return res.status(409).json(
+                formatErrorResponse(ERROR_CODES.DUPLICATE_ENTRY, 'This dependency already exists')
+            );
+        }
+
+        const result = await pool.query(
+            'INSERT INTO task_dependencies (task_id, depends_on_id) VALUES ($1, $2) RETURNING *',
+            [taskId, dependsOnId]
+        );
+
+        res.status(201).json({
+            message: 'Dependency added',
+            dependency: result.rows[0]
+        });
+    } catch (error) {
+        if (error.code === '23505') {
+            return res.status(409).json(
+                formatErrorResponse(ERROR_CODES.DUPLICATE_ENTRY, 'This dependency already exists')
+            );
+        }
+        console.error('Error adding dependency:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error adding dependency')
+        );
+    }
+});
+
+// DELETE /api/tasks/:id/dependencies/:dep_id - Remove a dependency
+app.delete('/api/tasks/:id/dependencies/:dep_id', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const depId = parseInt(req.params.dep_id, 10);
+
+        if (isNaN(taskId) || isNaN(depId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task or dependency ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(
+            'DELETE FROM task_dependencies WHERE id = $1 AND task_id = $2 RETURNING *',
+            [depId, taskId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.NOT_FOUND, 'Dependency not found')
+            );
+        }
+
+        res.json({
+            message: 'Dependency removed',
+            dependency: result.rows[0]
+        });
+    } catch (error) {
+        console.error('Error removing dependency:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error removing dependency')
+        );
+    }
+});
+
+// ==================== ATTACHMENTS ENDPOINTS ====================
+
+// GET /api/tasks/:id/attachments - List all attachments for a task
+app.get('/api/tasks/:id/attachments', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        const result = await pool.query(`
+            SELECT 
+                id,
+                task_id,
+                filename,
+                original_filename,
+                file_size,
+                mime_type,
+                uploaded_by,
+                created_at
+            FROM attachments
+            WHERE task_id = $1
+            ORDER BY created_at DESC
+        `, [taskId]);
+
+        res.json({
+            task_id: taskId,
+            attachments: result.rows,
+            total: result.rows.length
+        });
+    } catch (error) {
+        console.error('Error fetching attachments:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error fetching attachments')
+        );
+    }
+});
+
+// POST /api/tasks/:id/attachments - Upload an attachment
+app.post('/api/tasks/:id/attachments', ensureAuthenticated, upload.single('file'), async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        if (isNaN(taskId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task ID')
+            );
+        }
+
+        if (!req.file) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.MISSING_FIELD, 'No file provided')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            // Clean up uploaded file
+            await deleteFile(req.file.filename);
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Validate file size again (defense in depth)
+        if (req.file.size > MAX_FILE_SIZE) {
+            await deleteFile(req.file.filename);
+            return res.status(413).json(
+                formatErrorResponse(ERROR_CODES.FILE_TOO_LARGE, `File size exceeds maximum of 10MB`)
+            );
+        }
+
+        // Sanitize the original filename for storage
+        let secureFilename;
+        try {
+            secureFilename = sanitizeFilename(req.file.originalname);
+        } catch (error) {
+            await deleteFile(req.file.filename);
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_FILE_TYPE, error.message)
+            );
+        }
+
+        // Rename the uploaded file to secure name
+        const fs = require('fs').promises;
+        const oldPath = path.join(UPLOADS_DIR, req.file.filename);
+        const newPath = path.join(UPLOADS_DIR, secureFilename);
+
+        try {
+            await fs.rename(oldPath, newPath);
+        } catch (error) {
+            console.error('Error renaming file:', error);
+            return res.status(500).json(
+                formatErrorResponse(ERROR_CODES.UPLOAD_FAILED, 'Failed to save file')
+            );
+        }
+
+        // Store attachment metadata in database
+        const result = await pool.query(`
+            INSERT INTO attachments 
+            (task_id, filename, original_filename, file_path, file_size, mime_type, uploaded_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING id, task_id, filename, original_filename, file_size, mime_type, created_at
+        `, [
+            taskId,
+            secureFilename,
+            req.file.originalname,
+            secureFilename, // file_path is the relative path
+            req.file.size,
+            req.file.mimetype,
+            req.user.id,
+        ]);
+
+        res.status(201).json({
+            message: 'File uploaded successfully',
+            attachment: result.rows[0]
+        });
+    } catch (error) {
+        // Clean up uploaded file if there was an error
+        if (req.file) {
+            await deleteFile(req.file.filename).catch(err => console.error('Cleanup error:', err));
+        }
+        console.error('Error uploading file:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.UPLOAD_FAILED, 'Error uploading file')
+        );
+    }
+});
+
+// GET /api/tasks/:id/attachments/:attachment_id/download - Download an attachment
+app.get('/api/tasks/:id/attachments/:attachment_id/download', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const attachmentId = parseInt(req.params.attachment_id, 10);
+
+        if (isNaN(taskId) || isNaN(attachmentId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task or attachment ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Get attachment
+        const attachmentResult = await pool.query(
+            'SELECT filename, original_filename, mime_type FROM attachments WHERE id = $1 AND task_id = $2',
+            [attachmentId, taskId]
+        );
+
+        if (attachmentResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.ATTACHMENT_NOT_FOUND, 'Attachment not found')
+            );
+        }
+
+        const attachment = attachmentResult.rows[0];
+
+        try {
+            const filePath = getFilePath(attachment.filename);
+            
+            // Set download headers
+            res.setHeader('Content-Disposition', `attachment; filename="${attachment.original_filename}"`);
+            res.setHeader('Content-Type', attachment.mime_type);
+
+            // Send file
+            res.download(filePath, attachment.original_filename, (err) => {
+                if (err) {
+                    console.error('Error sending file:', err);
+                    if (!res.headersSent) {
+                        res.status(500).json(
+                            formatErrorResponse(ERROR_CODES.INTERNAL_ERROR, 'Error downloading file')
+                        );
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error accessing file:', error);
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.FILE_NOT_FOUND, 'File not accessible')
+            );
+        }
+    } catch (error) {
+        console.error('Error downloading attachment:', error);
+        if (!res.headersSent) {
+            res.status(500).json(
+                formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error downloading attachment')
+            );
+        }
+    }
+});
+
+// DELETE /api/tasks/:id/attachments/:attachment_id - Delete an attachment
+app.delete('/api/tasks/:id/attachments/:attachment_id', ensureAuthenticated, async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id, 10);
+        const attachmentId = parseInt(req.params.attachment_id, 10);
+
+        if (isNaN(taskId) || isNaN(attachmentId)) {
+            return res.status(400).json(
+                formatErrorResponse(ERROR_CODES.INVALID_ID, 'Invalid task or attachment ID')
+            );
+        }
+
+        // Verify task belongs to user
+        const taskResult = await pool.query(
+            'SELECT id FROM tasks WHERE id = $1 AND user_id = $2',
+            [taskId, req.user.id]
+        );
+
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.TASK_NOT_FOUND, 'Task not found')
+            );
+        }
+
+        // Get and delete attachment
+        const result = await pool.query(
+            'DELETE FROM attachments WHERE id = $1 AND task_id = $2 RETURNING filename',
+            [attachmentId, taskId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json(
+                formatErrorResponse(ERROR_CODES.ATTACHMENT_NOT_FOUND, 'Attachment not found')
+            );
+        }
+
+        // Delete file from disk
+        try {
+            await deleteFile(result.rows[0].filename);
+        } catch (error) {
+            console.error('Warning: Failed to delete file from disk:', error);
+            // Don't fail the response if file deletion fails
+        }
+
+        res.json({
+            message: 'Attachment deleted successfully',
+            attachment_id: attachmentId
+        });
+    } catch (error) {
+        console.error('Error deleting attachment:', error);
+        res.status(500).json(
+            formatErrorResponse(ERROR_CODES.DATABASE_ERROR, 'Error deleting attachment')
         );
     }
 });

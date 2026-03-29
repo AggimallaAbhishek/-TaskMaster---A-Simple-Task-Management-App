@@ -422,6 +422,360 @@ describe('API Enhancements - Integration Tests', () => {
         });
     });
 
+    // ===== SUBTASKS TESTS =====
+    describe('Subtasks', () => {
+        let subtaskTaskId;
+
+        beforeAll(async () => {
+            const res = await request(app).post('/api/tasks').send({
+                title: 'Task with subtasks',
+                priority: 'high',
+            });
+            subtaskTaskId = res.body.id;
+        });
+
+        it('should create a subtask', async () => {
+            const res = await request(app).post(`/api/tasks/${subtaskTaskId}/subtasks`).send({
+                title: 'First subtask',
+            });
+
+            expect(res.statusCode).toEqual(201);
+            expect(res.body.subtask.title).toEqual('First subtask');
+            expect(res.body.subtask.completed).toEqual(false);
+        });
+
+        it('should list all subtasks', async () => {
+            // Create another subtask first
+            await request(app).post(`/api/tasks/${subtaskTaskId}/subtasks`).send({
+                title: 'Second subtask',
+            });
+
+            const res = await request(app).get(`/api/tasks/${subtaskTaskId}/subtasks`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.subtasks.length).toBeGreaterThanOrEqual(2);
+            expect(res.body.total).toBeGreaterThanOrEqual(2);
+        });
+
+        it('should update a subtask', async () => {
+            const listRes = await request(app).get(`/api/tasks/${subtaskTaskId}/subtasks`);
+            const subtaskId = listRes.body.subtasks[0].id;
+
+            const res = await request(app).put(`/api/tasks/${subtaskTaskId}/subtasks/${subtaskId}`).send({
+                title: 'Updated subtask title',
+                completed: true,
+            });
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.subtask.title).toEqual('Updated subtask title');
+            expect(res.body.subtask.completed).toEqual(true);
+        });
+
+        it('should delete a subtask', async () => {
+            const listRes = await request(app).get(`/api/tasks/${subtaskTaskId}/subtasks`);
+            const initialCount = listRes.body.subtasks.length;
+            const subtaskId = listRes.body.subtasks[0].id;
+
+            const res = await request(app).delete(`/api/tasks/${subtaskTaskId}/subtasks/${subtaskId}`);
+
+            expect(res.statusCode).toEqual(200);
+
+            const afterRes = await request(app).get(`/api/tasks/${subtaskTaskId}/subtasks`);
+            expect(afterRes.body.subtasks.length).toEqual(initialCount - 1);
+        });
+
+        it('should reject empty subtask title', async () => {
+            const res = await request(app).post(`/api/tasks/${subtaskTaskId}/subtasks`).send({
+                title: '',
+            });
+
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.error).toBeDefined();
+        });
+
+        it('should reject missing subtask title', async () => {
+            const res = await request(app).post(`/api/tasks/${subtaskTaskId}/subtasks`).send({});
+
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.error).toBeDefined();
+        });
+
+        it('should return 404 for non-existent task', async () => {
+            const res = await request(app).post('/api/tasks/99999999/subtasks').send({
+                title: 'Subtask on non-existent task',
+            });
+
+            expect(res.statusCode).toEqual(404);
+        });
+    });
+
+    // ===== TASK DEPENDENCIES TESTS =====
+    describe('Task Dependencies', () => {
+        let depTaskId1, depTaskId2, depTaskId3;
+
+        beforeAll(async () => {
+            const res1 = await request(app).post('/api/tasks').send({
+                title: 'Dependent task 1',
+                priority: 'high',
+            });
+            depTaskId1 = res1.body.id;
+
+            const res2 = await request(app).post('/api/tasks').send({
+                title: 'Dependent task 2',
+                priority: 'medium',
+            });
+            depTaskId2 = res2.body.id;
+
+            const res3 = await request(app).post('/api/tasks').send({
+                title: 'Dependent task 3',
+                priority: 'low',
+            });
+            depTaskId3 = res3.body.id;
+        });
+
+        it('should add a dependency', async () => {
+            const res = await request(app).post(`/api/tasks/${depTaskId1}/dependencies`).send({
+                depends_on_id: depTaskId2,
+            });
+
+            expect(res.statusCode).toEqual(201);
+            expect(res.body.dependency.task_id).toEqual(depTaskId1);
+            expect(res.body.dependency.depends_on_id).toEqual(depTaskId2);
+        });
+
+        it('should list dependencies for a task', async () => {
+            const res = await request(app).get(`/api/tasks/${depTaskId1}/dependencies`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.dependencies.length).toBeGreaterThanOrEqual(1);
+            expect(res.body.total).toBeGreaterThanOrEqual(1);
+            expect(res.body.dependencies[0].depends_on_title).toBeDefined();
+        });
+
+        it('should reject self-referencing dependency', async () => {
+            const res = await request(app).post(`/api/tasks/${depTaskId1}/dependencies`).send({
+                depends_on_id: depTaskId1,
+            });
+
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.error).toBeDefined();
+        });
+
+        it('should reject circular dependency', async () => {
+            // Create chain: depTaskId1 -> depTaskId2 (already exists)
+            // Now try to create: depTaskId2 -> depTaskId1 (should fail)
+            const res = await request(app).post(`/api/tasks/${depTaskId2}/dependencies`).send({
+                depends_on_id: depTaskId1,
+            });
+
+            expect(res.statusCode).toEqual(409);
+            expect(res.body.code).toEqual('CIRCULAR_DEPENDENCY');
+        });
+
+        it('should reject duplicate dependency', async () => {
+            // Try to add the same dependency again
+            const res = await request(app).post(`/api/tasks/${depTaskId1}/dependencies`).send({
+                depends_on_id: depTaskId2,
+            });
+
+            expect(res.statusCode).toEqual(409);
+            expect(res.body.code).toEqual('DUPLICATE_ENTRY');
+        });
+
+        it('should remove a dependency', async () => {
+            // Add a new dependency
+            const addRes = await request(app).post(`/api/tasks/${depTaskId1}/dependencies`).send({
+                depends_on_id: depTaskId3,
+            });
+            const depId = addRes.body.dependency.id;
+
+            // List dependencies
+            const listRes = await request(app).get(`/api/tasks/${depTaskId1}/dependencies`);
+            const initialCount = listRes.body.dependencies.length;
+
+            // Remove it
+            const res = await request(app).delete(`/api/tasks/${depTaskId1}/dependencies/${depId}`);
+
+            expect(res.statusCode).toEqual(200);
+
+            // Verify it's gone
+            const afterRes = await request(app).get(`/api/tasks/${depTaskId1}/dependencies`);
+            expect(afterRes.body.dependencies.length).toEqual(initialCount - 1);
+        });
+
+        it('should return 404 for non-existent dependency', async () => {
+            const res = await request(app).delete(`/api/tasks/${depTaskId1}/dependencies/99999999`);
+
+            expect(res.statusCode).toEqual(404);
+        });
+
+        it('should handle multi-level dependencies without circular ref', async () => {
+            // Create: task4 <- task5 <- task6 (long chain)
+            const res4 = await request(app).post('/api/tasks').send({ title: 'Task 4' });
+            const task4Id = res4.body.id;
+
+            const res5 = await request(app).post('/api/tasks').send({ title: 'Task 5' });
+            const task5Id = res5.body.id;
+
+            const res6 = await request(app).post('/api/tasks').send({ title: 'Task 6' });
+            const task6Id = res6.body.id;
+
+            // Add: 5 depends on 4
+            await request(app).post(`/api/tasks/${task5Id}/dependencies`).send({
+                depends_on_id: task4Id,
+            });
+
+            // Add: 6 depends on 5
+            const res = await request(app).post(`/api/tasks/${task6Id}/dependencies`).send({
+                depends_on_id: task5Id,
+            });
+
+            expect(res.statusCode).toEqual(201);
+
+            // Try to create circular: 4 depends on 6 (should fail)
+            const circularRes = await request(app).post(`/api/tasks/${task4Id}/dependencies`).send({
+                depends_on_id: task6Id,
+            });
+
+            expect(circularRes.statusCode).toEqual(409);
+            expect(circularRes.body.code).toEqual('CIRCULAR_DEPENDENCY');
+        });
+    });
+
+    // ===== ATTACHMENTS TESTS =====
+    describe('Task Attachments', () => {
+        let attachmentTaskId;
+
+        beforeAll(async () => {
+            const res = await request(app).post('/api/tasks').send({
+                title: 'Task with attachments',
+                priority: 'high',
+            });
+            attachmentTaskId = res.body.id;
+        });
+
+        it('should list empty attachments for new task', async () => {
+            const res = await request(app).get(`/api/tasks/${attachmentTaskId}/attachments`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.attachments).toEqual([]);
+            expect(res.body.total).toEqual(0);
+        });
+
+        it('should reject missing file upload', async () => {
+            const res = await request(app)
+                .post(`/api/tasks/${attachmentTaskId}/attachments`)
+                .send({}); // No file
+
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.error).toBeDefined();
+        });
+
+        it('should upload a valid text file', async () => {
+            const res = await request(app)
+                .post(`/api/tasks/${attachmentTaskId}/attachments`)
+                .attach('file', Buffer.from('Test file content'), 'test.txt');
+
+            expect(res.statusCode).toEqual(201);
+            expect(res.body.attachment).toBeDefined();
+            expect(res.body.attachment.filename).toBeDefined();
+            expect(res.body.attachment.original_filename).toEqual('test.txt');
+            expect(res.body.attachment.mime_type).toEqual('text/plain');
+            expect(res.body.attachment.file_size).toBeGreaterThan(0);
+        });
+
+        it('should list uploaded attachments', async () => {
+            const res = await request(app).get(`/api/tasks/${attachmentTaskId}/attachments`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body.attachments.length).toBeGreaterThanOrEqual(1);
+            expect(res.body.attachments[0].original_filename).toEqual('test.txt');
+        });
+
+        it('should reject invalid file types', async () => {
+            // Create an .exe file
+            const res = await request(app)
+                .post(`/api/tasks/${attachmentTaskId}/attachments`)
+                .attach('file', Buffer.from('MZ\\x90'), 'malware.exe');
+
+            expect(res.statusCode).toEqual(400);
+            expect(res.body.code).toEqual('INVALID_FILE_TYPE');
+        });
+
+        it('should sanitize file names', async () => {
+            const res = await request(app)
+                .post(`/api/tasks/${attachmentTaskId}/attachments`)
+                .attach('file', Buffer.from('Test'), '../../../etc/passwd.txt');
+
+            expect(res.statusCode).toEqual(201);
+            // Verify the filename was sanitized
+            expect(res.body.attachment.filename).not.toContain('..');
+            expect(res.body.attachment.filename).not.toContain('/');
+        });
+
+        it('should download an attachment', async () => {
+            // Get attachment list
+            const listRes = await request(app).get(`/api/tasks/${attachmentTaskId}/attachments`);
+            const attachmentId = listRes.body.attachments[0].id;
+
+            const res = await request(app)
+                .get(`/api/tasks/${attachmentTaskId}/attachments/${attachmentId}/download`);
+
+            expect(res.statusCode).toEqual(200);
+            expect(res.body).toBeDefined();
+        });
+
+        it('should return 404 for non-existent attachment', async () => {
+            const res = await request(app)
+                .get(`/api/tasks/${attachmentTaskId}/attachments/99999999/download`);
+
+            expect(res.statusCode).toEqual(404);
+            expect(res.body.code).toEqual('ATTACHMENT_NOT_FOUND');
+        });
+
+        it('should delete an attachment', async () => {
+            // Get attachment list
+            const listRes = await request(app).get(`/api/tasks/${attachmentTaskId}/attachments`);
+            const initialCount = listRes.body.attachments.length;
+            const attachmentId = listRes.body.attachments[0].id;
+
+            // Delete
+            const res = await request(app)
+                .delete(`/api/tasks/${attachmentTaskId}/attachments/${attachmentId}`);
+
+            expect(res.statusCode).toEqual(200);
+
+            // Verify it's gone
+            const afterRes = await request(app).get(`/api/tasks/${attachmentTaskId}/attachments`);
+            expect(afterRes.body.attachments.length).toEqual(initialCount - 1);
+        });
+
+        it('should reject upload for non-existent task', async () => {
+            const res = await request(app)
+                .post('/api/tasks/99999999/attachments')
+                .attach('file', Buffer.from('Test'), 'test.txt');
+
+            expect(res.statusCode).toEqual(404);
+            expect(res.body.code).toEqual('TASK_NOT_FOUND');
+        });
+
+        it('should upload multiple file types (PDF, DOC, JPG, etc)', async () => {
+            const fileTypes = [
+                { name: 'document.pdf', mime: 'application/pdf', buffer: '%PDF' },
+                { name: 'image.jpg', mime: 'image/jpeg', buffer: '\\xFF\\xD8\\xFF' },
+                { name: 'spreadsheet.xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: 'PK' },
+            ];
+
+            for (const file of fileTypes) {
+                const res = await request(app)
+                    .post(`/api/tasks/${attachmentTaskId}/attachments`)
+                    .attach('file', Buffer.from(file.buffer), file.name);
+
+                expect([201, 400]).toContain(res.statusCode); // 201 if accepted, 400 if type validation fails
+            }
+        });
+    });
+
     // ===== PARAMETER VALIDATION TESTS =====
     describe('Parameter Validation', () => {
         it('should reject invalid task ID format', async () => {

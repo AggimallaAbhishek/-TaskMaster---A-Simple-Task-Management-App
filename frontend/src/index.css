@@ -280,3 +280,82 @@ html[data-theme='dark'] .error {
     border-radius: 6px;
     margin-bottom: 20px;
 }
+/* ===== OFFLINE INDICATOR ===== */
+.offline-indicator {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+}
+
+.offline-banner {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+    color: white;
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    animation: slideDown 0.3s ease-out;
+}
+
+.offline-icon {
+    font-size: 18px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes slideDown {
+    from {
+        transform: translateY(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+/* ===== SYNC STATUS ===== */
+.sync-status {
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sync-status.syncing {
+    background-color: rgba(102, 126, 234, 0.1);
+    color: #667eea;
+    animation: spin 1s linear infinite;
+}
+
+.sync-status.synced {
+    background-color: rgba(46, 125, 50, 0.1);
+    color: #2e7d32;
+}
+
+.sync-status.error {
+    background-color: rgba(198, 40, 40, 0.1);
+    color: #c62828;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

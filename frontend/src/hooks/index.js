@@ -5,3 +5,5 @@ export { useProfile } from './useProfile';
 export { usePresets } from './usePresets';
 export { usePhysics } from './usePhysics';
 export { useTheme } from './useTheme';
+export { useOffline } from './useOffline';
+export { useOfflineSync } from './useOfflineSync';

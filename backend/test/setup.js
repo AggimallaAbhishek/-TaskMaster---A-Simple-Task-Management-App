@@ -13,10 +13,15 @@ beforeAll(async () => {
     });
 
     try {
-        // Drop tables in reverse order of dependencies
-        await testPool.query('DROP TABLE IF EXISTS filter_presets');
-        await testPool.query('DROP TABLE IF EXISTS tasks');
-        await testPool.query('DROP TABLE IF EXISTS users');
+        // Drop tables in reverse order of dependencies (CASCADE to handle foreign keys)
+        await testPool.query('DROP TABLE IF EXISTS task_recurrence CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS task_tags CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS subtasks CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS task_dependencies CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS attachments CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS filter_presets CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS tasks CASCADE');
+        await testPool.query('DROP TABLE IF EXISTS users CASCADE');
 
         // Create users table
         await testPool.query(`
@@ -44,9 +49,59 @@ beforeAll(async () => {
                 priority VARCHAR(20) DEFAULT 'medium',
                 category VARCHAR(100) DEFAULT 'general',
                 due_date TIMESTAMP WITH TIME ZONE,
-                user_id INTEGER REFERENCES users(id),
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Create task_recurrence table
+        await testPool.query(`
+            CREATE TABLE task_recurrence (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                frequency VARCHAR(20) NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly', 'yearly')),
+                interval INTEGER DEFAULT 1 CHECK (interval > 0),
+                end_date TIMESTAMP WITH TIME ZONE,
+                last_recurrence_date TIMESTAMP WITH TIME ZONE,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Create task_tags table
+        await testPool.query(`
+            CREATE TABLE task_tags (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                tag VARCHAR(100) NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, tag)
+            )
+        `);
+
+        // Create subtasks table
+        await testPool.query(`
+            CREATE TABLE subtasks (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                title VARCHAR(255) NOT NULL,
+                completed BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Create task_dependencies table
+        await testPool.query(`
+            CREATE TABLE task_dependencies (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                depends_on_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, depends_on_id),
+                CHECK (task_id != depends_on_id)
             )
         `);
 
@@ -61,6 +116,21 @@ beforeAll(async () => {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, name)
+            )
+        `);
+
+        // Create attachments table
+        await testPool.query(`
+            CREATE TABLE attachments (
+                id SERIAL PRIMARY KEY,
+                task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                filename VARCHAR(255) NOT NULL,
+                original_filename VARCHAR(255) NOT NULL,
+                file_path VARCHAR(500) NOT NULL,
+                file_size INTEGER NOT NULL,
+                mime_type VARCHAR(100),
+                uploaded_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             )
         `);
 
