@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { COMMON_STYLES, TYPOGRAPHY, SPACING, BORDER_RADIUS } from '../../styles/theme';
+import { COMMON_STYLES, TYPOGRAPHY, SPACING, BORDER_RADIUS, getPriorityColor } from '../../styles/theme';
 
 function TaskItemComponent({
     task,
