@@ -1,7 +1,7 @@
 import React from 'react';
 import { TaskItem } from './TaskItem';
 import { FilterPanel } from '../Filters/FilterPanel';
-import { COLORS } from '../../styles/theme';
+import { COMMON_STYLES, TYPOGRAPHY, SPACING } from '../../styles/theme';
 
 export function TaskList({
     tasks,

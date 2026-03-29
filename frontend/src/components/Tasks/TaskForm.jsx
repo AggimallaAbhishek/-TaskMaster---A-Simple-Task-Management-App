@@ -1,5 +1,5 @@
 import React, { useCallback } from 'react';
-import { COLORS, COMMON_STYLES, PRIORITY_OPTIONS, CATEGORY_OPTIONS } from '../../styles/theme';
+import { COMMON_STYLES, TYPOGRAPHY, SPACING, BORDER_RADIUS, PRIORITY_OPTIONS, CATEGORY_OPTIONS } from '../../styles/theme';
 
 export function TaskForm({
     title,
@@ -22,23 +22,23 @@ export function TaskForm({
 
     const labelStyle = {
         display: 'block',
-        fontSize: '12px',
-        fontWeight: 500,
-        color: COLORS.TEXT_MUTED,
-        marginBottom: '4px',
+        fontSize: TYPOGRAPHY.fontSize.sm,
+        fontWeight: TYPOGRAPHY.fontWeight.medium,
+        color: 'var(--color-text-muted)',
+        marginBottom: SPACING.xs,
     };
 
     return (
-        <form 
-            onSubmit={(e) => { e.preventDefault(); onSubmit(); }} 
-            style={{ marginBottom: '20px' }}
+        <form
+            onSubmit={(e) => { e.preventDefault(); onSubmit(); }}
+            style={{ marginBottom: SPACING.md }}
             aria-label="Add new task form"
         >
             <div
                 style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                    gap: '15px',
+                    gap: SPACING.md,
                 }}
             >
                 <div>
@@ -54,7 +54,12 @@ export function TaskForm({
                         placeholder="Enter a new task..."
                         style={{
                             width: '100%',
-                            ...COMMON_STYLES.input,
+                            padding: SPACING.sm,
+                            border: '2px solid var(--color-gray-border)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: TYPOGRAPHY.fontSize.base,
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            color: 'var(--color-text-primary)',
                         }}
                         disabled={loading}
                         aria-required="true"
@@ -75,7 +80,12 @@ export function TaskForm({
                         onChange={handlePriorityChange}
                         style={{
                             width: '100%',
-                            ...COMMON_STYLES.input,
+                            padding: SPACING.sm,
+                            border: '2px solid var(--color-gray-border)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: TYPOGRAPHY.fontSize.base,
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            color: 'var(--color-text-primary)',
                         }}
                         disabled={loading}
                         aria-label="Select task priority"
@@ -98,7 +108,12 @@ export function TaskForm({
                         onChange={handleCategoryChange}
                         style={{
                             width: '100%',
-                            ...COMMON_STYLES.input,
+                            padding: SPACING.sm,
+                            border: '2px solid var(--color-gray-border)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: TYPOGRAPHY.fontSize.base,
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            color: 'var(--color-text-primary)',
                         }}
                         disabled={loading}
                         aria-label="Select task category"
@@ -122,7 +137,12 @@ export function TaskForm({
                         onChange={handleDueDateChange}
                         style={{
                             width: '100%',
-                            ...COMMON_STYLES.input,
+                            padding: SPACING.sm,
+                            border: '2px solid var(--color-gray-border)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: TYPOGRAPHY.fontSize.base,
+                            backgroundColor: 'var(--color-bg-secondary)',
+                            color: 'var(--color-text-primary)',
                         }}
                         disabled={loading}
                         aria-label="Select due date"
@@ -135,12 +155,15 @@ export function TaskForm({
                 disabled={loading}
                 style={{
                     width: '100%',
-                    padding: '12px',
-                    backgroundColor: loading ? COLORS.GRAY : COLORS.PRIMARY,
-                    color: COLORS.TEXT_WHITE,
-                    ...COMMON_STYLES.button,
-                    marginTop: '10px',
+                    padding: `${SPACING.sm} ${SPACING.lg}`,
+                    backgroundColor: loading ? 'var(--color-gray)' : 'var(--color-primary)',
+                    color: loading ? 'var(--color-text-muted)' : 'var(--color-text-white)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: TYPOGRAPHY.fontSize.base,
+                    fontWeight: TYPOGRAPHY.fontWeight.semibold,
                     cursor: loading ? 'not-allowed' : 'pointer',
+                    transition: 'var(--transition-normal)',
                 }}
                 aria-busy={loading}
                 aria-label={loading ? 'Adding task...' : 'Add task'}

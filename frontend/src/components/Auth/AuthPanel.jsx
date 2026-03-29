@@ -1,15 +1,17 @@
 import React from 'react';
-import { COLORS } from '../../styles/theme';
+import { COMMON_STYLES, TYPOGRAPHY, SPACING } from '../../styles/theme';
 
 export function AuthPanel({ user, loading, onLogin, onLogout, onSettings, onToggleTheme, isDarkMode }) {
     return (
         <header
             style={{
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                padding: '20px',
-                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-                marginBottom: '40px',
+                background: 'linear-gradient(135deg, var(--color-header-start) 0%, var(--color-header-end) 100%)',
+                color: 'var(--color-text-white)',
+                padding: `${SPACING.lg} ${SPACING.xl}`,
+                boxShadow: 'var(--color-shadow)',
+                marginBottom: `${SPACING.xl}`,
+                position: 'relative',
+                overflow: 'hidden',
             }}
         >
             <div
@@ -19,11 +21,20 @@ export function AuthPanel({ user, loading, onLogin, onLogout, onSettings, onTogg
                     alignItems: 'center',
                     maxWidth: '1200px',
                     margin: '0 auto',
-                    gap: '20px',
+                    gap: `${SPACING.md}`,
                     flexWrap: 'wrap',
+                    padding: `0 ${SPACING.md}`,
                 }}
             >
-                <h1 style={{ fontSize: '32px', fontWeight: 700, margin: 0 }}>
+                <h1 style={{
+                    fontFamily: TYPOGRAPHY.fontFamily,
+                    fontSize: TYPOGRAPHY.fontSize['3xl'],
+                    fontWeight: TYPOGRAPHY.fontWeight.bold,
+                    margin: 0,
+                    background: 'linear-gradient(to right, var(--color-text-white), var(--color-text-light))',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                }}>
                     TaskMaster 🚀
                 </h1>
 
@@ -31,12 +42,16 @@ export function AuthPanel({ user, loading, onLogin, onLogout, onSettings, onTogg
                     style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '12px',
+                        gap: `${SPACING.sm}`,
                         flexWrap: 'wrap',
                     }}
                 >
                     {loading ? (
-                        <span style={{ fontSize: '14px', fontStyle: 'italic' }}>
+                        <span style={{
+                            fontSize: TYPOGRAPHY.fontSize.sm,
+                            fontStyle: 'italic',
+                            color: 'var(--color-text-muted)',
+                        }}>
                             Checking authentication...
                         </span>
                     ) : (
@@ -45,101 +60,119 @@ export function AuthPanel({ user, loading, onLogin, onLogout, onSettings, onTogg
                                 <button
                                     onClick={onToggleTheme}
                                     style={{
-                                        padding: '8px 16px',
-                                        backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                                        color: 'white',
-                                        border: '1px solid rgba(255, 255, 255, 0.5)',
-                                        borderRadius: '4px',
+                                        padding: `${SPACING.sm} ${SPACING.md}`,
+                                        backgroundColor: 'var(--color-bg-secondary)',
+                                        color: 'var(--color-text-primary)',
+                                        border: '1px solid var(--color-border)',
+                                        borderRadius: 'var(--radius-sm)',
                                         cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: 500,
-                                        transition: 'all 0.2s ease',
+                                        fontSize: TYPOGRAPHY.fontSize.base,
+                                        fontWeight: TYPOGRAPHY.fontWeight.medium,
+                                        transition: 'var(--transition-normal)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: `${SPACING.xs}`,
                                     }}
                                     onMouseEnter={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
+                                        e.target.style.backgroundColor = 'var(--color-input-focus)';
                                     }}
                                     onMouseLeave={(e) => {
-                                        e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                                        e.target.style.backgroundColor = 'var(--color-bg-secondary)';
                                     }}
                                     aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
                                     title={isDarkMode ? 'Light Mode' : 'Dark Mode'}
                                 >
-                                    {isDarkMode ? '☀️ Light' : '🌙 Dark'}
+                                    {isDarkMode ? '☀️' : '🌙'}
+                                    <span>{isDarkMode ? 'Light' : 'Dark'}</span>
                                 </button>
                             )}
                             {user ? (
                                 <>
-                                    <span style={{ fontSize: '14px' }}>
+                                    <span style={{
+                                        fontSize: TYPOGRAPHY.fontSize.base,
+                                        color: 'var(--color-text-primary)',
+                                    }}>
                                         Welcome, <strong>{user.username}</strong>
                                     </span>
                                     {onSettings && (
                                         <button
                                             onClick={onSettings}
                                             style={{
-                                                padding: '8px 16px',
-                                                backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                                                color: 'white',
-                                                border: '1px solid rgba(255, 255, 255, 0.5)',
-                                                borderRadius: '4px',
+                                                padding: `${SPACING.sm} ${SPACING.md}`,
+                                                backgroundColor: 'var(--color-bg-secondary)',
+                                                color: 'var(--color-text-primary)',
+                                                border: '1px solid var(--color-border)',
+                                                borderRadius: 'var(--radius-sm)',
                                                 cursor: 'pointer',
-                                                fontSize: '14px',
-                                                fontWeight: 500,
-                                                transition: 'all 0.2s ease',
+                                                fontSize: TYPOGRAPHY.fontSize.base,
+                                                fontWeight: TYPOGRAPHY.fontWeight.medium,
+                                                transition: 'var(--transition-normal)',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: `${SPACING.xs}`,
                                             }}
                                             onMouseEnter={(e) => {
-                                                e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
+                                                e.target.style.backgroundColor = 'var(--color-input-focus)';
                                             }}
                                             onMouseLeave={(e) => {
-                                                e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                                                e.target.style.backgroundColor = 'var(--color-bg-secondary)';
                                             }}
                                             aria-label="Open profile settings"
                                         >
-                                            ⚙️ Settings
+                                            ⚙️
+                                            <span>Settings</span>
                                         </button>
                                     )}
                                     <button
                                         onClick={onLogout}
                                         style={{
-                                            padding: '8px 16px',
-                                            backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                                            color: 'white',
-                                            border: '1px solid rgba(255, 255, 255, 0.5)',
-                                            borderRadius: '4px',
+                                            padding: `${SPACING.sm} ${SPACING.md}`,
+                                            backgroundColor: 'var(--color-danger)',
+                                            color: 'var(--color-text-white)',
+                                            border: 'none',
+                                            borderRadius: 'var(--radius-sm)',
                                             cursor: 'pointer',
-                                            fontSize: '14px',
-                                            fontWeight: 500,
-                                            transition: 'all 0.2s ease',
+                                            fontSize: TYPOGRAPHY.fontSize.base,
+                                            fontWeight: TYPOGRAPHY.fontWeight.medium,
+                                            transition: 'var(--transition-normal)',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: `${SPACING.xs}`,
                                         }}
                                         onMouseEnter={(e) => {
-                                            e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.3)';
+                                            e.target.style.backgroundColor = 'var(--color-danger-hover)';
                                         }}
                                         onMouseLeave={(e) => {
-                                            e.target.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                                            e.target.style.backgroundColor = 'var(--color-danger)';
                                         }}
                                     >
-                                        🚪 Logout
+                                        🚪
+                                        <span>Logout</span>
                                     </button>
                                 </>
                             ) : (
                                 <button
                                     onClick={onLogin}
                                     style={{
-                                        padding: '10px 20px',
-                                        backgroundColor: '#4285F4',
-                                        color: 'white',
+                                        padding: `${SPACING.sm} ${SPACING.lg}`,
+                                        backgroundColor: 'var(--color-primary)',
+                                        color: 'var(--color-text-white)',
                                         border: 'none',
-                                        borderRadius: '4px',
+                                        borderRadius: 'var(--radius-sm)',
                                         cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: 600,
-                                        transition: 'background-color 0.2s ease',
-                                        boxShadow: '0 2px 4px rgba(0, 0, 0, 0.2)',
+                                        fontSize: TYPOGRAPHY.fontSize.base,
+                                        fontWeight: TYPOGRAPHY.fontWeight.semibold,
+                                        transition: 'var(--transition-normal)',
+                                        boxShadow: 'var(--color-shadow)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: `${SPACING.xs}`,
                                     }}
                                     onMouseEnter={(e) => {
-                                        e.target.style.backgroundColor = '#357AE8';
+                                        e.target.style.backgroundColor = 'var(--color-primary-hover)';
                                     }}
                                     onMouseLeave={(e) => {
-                                        e.target.style.backgroundColor = '#4285F4';
+                                        e.target.style.backgroundColor = 'var(--color-primary)';
                                     }}
                                 >
                                     Login with Google
